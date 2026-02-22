@@ -1,0 +1,50 @@
+{
+  "distill_csv": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/distill_teacher_scores_smoke.csv",
+  "n_records": 12,
+  "n_train": 8,
+  "n_val": 4,
+  "best_epoch": 1,
+  "best_val_loss": 921.1798706054688,
+  "device": "mps",
+  "model_config": {
+    "embed_dim": 64,
+    "hidden_dim": 96,
+    "num_layers": 1,
+    "dropout": 0.0
+  },
+  "train_config": {
+    "seed": 13,
+    "batch_size": 2,
+    "epochs": 1,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "val_fraction": 0.34,
+    "nll_weight": 1.0,
+    "global_weight": 1.0,
+    "junction_weight": 1.0,
+    "num_workers": 0,
+    "device": null
+  },
+  "window": {
+    "left": 15,
+    "right": 15
+  },
+  "final_metrics": {
+    "epoch": 1,
+    "train_loss": 915.9865570068359,
+    "train_nll": 3.3087671995162964,
+    "train_global_mse": 250.93473434448242,
+    "train_junction_mse": 661.7430572509766,
+    "val_loss": 921.1798706054688,
+    "val_nll": 3.2542734146118164,
+    "val_global_mse": 252.10787963867188,
+    "val_junction_mse": 665.8177185058594,
+    "global_corr": -0.25792636778665207,
+    "global_mae": 15.877884328365326,
+    "global_mse": 252.10787875972716,
+    "junction_mean_corr": 0.6050758255069302,
+    "junction_mean_mae": 25.508336240053175,
+    "junction_mean_mse": 650.6992890772068
+  }
+}

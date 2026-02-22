@@ -1,0 +1,2 @@
+2026-02-20 19:32:05 | INFO | cas12a_shuffling_model.student.score_student | Loaded student checkpoint: cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/student/run_1771644700/student_best.pt (device=mps)
+2026-02-20 19:32:14 | INFO | __main__ | Scored rows=12, output=cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/student_batch_scores.csv

@@ -1,0 +1,4 @@
+2026-02-20 19:31:40 | INFO | cas12a_shuffling_model.student.train_student | Student device: mps
+2026-02-20 19:31:55 | INFO | cas12a_shuffling_model.student.train_student | Epoch 1/1 train_loss=915.9866 val_loss=921.1799 global_corr=-0.2579
+2026-02-20 19:31:55 | INFO | __main__ | Student training finished. Run dir: cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/student/run_1771644700
+2026-02-20 19:31:55 | INFO | __main__ | Best epoch=1, best_val_loss=921.179871

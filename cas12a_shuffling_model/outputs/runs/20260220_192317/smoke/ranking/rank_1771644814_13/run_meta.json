@@ -1,0 +1,19 @@
+{
+  "run_id": "rank_1771644814_13",
+  "seed": 13,
+  "sample_size": 160,
+  "shortlist_size": 50,
+  "teacher_rerank_size": 20,
+  "top_k": 10,
+  "min_hamming": 1,
+  "student_checkpoint": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/student/run_1771644700/student_best.pt",
+  "calibration_model": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/calibration/cal_1771644741/calibration_model.joblib",
+  "calibration_meta": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/calibration/cal_1771644741/calibration_meta.json",
+  "outputs": {
+    "student_sample_scored": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/ranking/rank_1771644814_13/student_sample_scored.csv",
+    "student_shortlist": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/ranking/rank_1771644814_13/student_shortlist.csv",
+    "teacher_reranked": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/ranking/rank_1771644814_13/teacher_reranked.csv",
+    "candidate_top": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/ranking/rank_1771644814_13/candidate_top.csv",
+    "candidate_all_scored": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/ranking/rank_1771644814_13/candidate_all_scored.csv"
+  }
+}

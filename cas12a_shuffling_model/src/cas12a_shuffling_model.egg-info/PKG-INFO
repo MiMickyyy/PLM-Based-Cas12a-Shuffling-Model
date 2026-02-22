@@ -1,0 +1,52 @@
+Metadata-Version: 2.4
+Name: cas12a-shuffling-model
+Version: 0.1.0
+Summary: PLM-guided ranking pipeline for Cas12a domain shuffling (teacher-student distillation)
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: biopython>=1.85
+Requires-Dist: pandas>=2.3
+Requires-Dist: openpyxl>=3.1
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: numpy>=2.0
+Requires-Dist: rapidfuzz>=3.13
+Provides-Extra: calibration
+Requires-Dist: scikit-learn>=1.6; extra == "calibration"
+Provides-Extra: plots
+Requires-Dist: matplotlib>=3.9; extra == "plots"
+
+# PLM-guided ranking pipeline for Cas12a domain shuffling
+
+Teacher: ProtGPT2 (PLM prior)  
+Student: GRU autoregressive LM (distillation surrogate)  
+Goal: score/rank chimeras in a combinatorial design space using interpretable global + junction-level consistency scores.
+
+## Safety statement
+This study is a pure mathematical/computational modeling project for a mathematical modeling course. Any wet-lab content or results referenced are pre-existing or fictionalized examples used only for modeling context. This work does not involve any activities that impact humans or present biological safety risks. The broader research context is conducted under ethics oversight and approval at the University of California, Riverside, and this computational task itself has no safety risk.
+
+## Quickstart (current milestone: data + reconstruction)
+Create a local venv and install deps:
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e .
+```
+
+Build validated domain peptides (translates SnapGene `.dna`, validates vs parental proteins):
+
+```bash
+.venv/bin/python -m cas12a_shuffling_model.cli.build_domains \
+  --domains-dir ../domains \
+  --parents As=../AsCas12a.prot Fn=../FnCas12a.prot Lb=../LbCas12a.prot Mb2=../Mb2Cas12a.prot \
+  --out-dir ../cas12a_shuffling_model/data/processed
+```
+
+Reconstruct active chimera AA sequences from `Sequence_Result.xlsx`:
+
+```bash
+.venv/bin/python -m cas12a_shuffling_model.cli.reconstruct_actives \
+  --sequence-results ../Sequence_Result.xlsx \
+  --validated-domains ../cas12a_shuffling_model/data/processed/validated_domain_peptides.csv \
+  --out-dir ../cas12a_shuffling_model/data/active
+```

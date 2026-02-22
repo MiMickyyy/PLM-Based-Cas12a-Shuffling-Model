@@ -1,0 +1,11 @@
+{
+  "mode": "exhaustive",
+  "total_combos": 4194304,
+  "processed_combos": 4194304,
+  "shortlist_size": 20000,
+  "started_at": 1771710351.131074,
+  "finished_at": 1771729158.545362,
+  "runtime_seconds": 18807.41428899765,
+  "checkpoint_path": "/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260221_130645/full/ranking/formal_exhaustive_seed13/student_exhaustive_checkpoint.json",
+  "shortlist_csv": "/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260221_130645/full/ranking/formal_exhaustive_seed13/student_shortlist.csv"
+}

@@ -1,0 +1,28 @@
+{
+  "run_id": "formal_exhaustive_seed13",
+  "mode": "exhaustive",
+  "seed": 13,
+  "sample_size": null,
+  "total_combos": 4194304,
+  "shortlist_size": 20000,
+  "teacher_rerank_size": 2000,
+  "top_k": 50,
+  "min_hamming": 2,
+  "student_batch_size": 1024,
+  "progress_every": 204800,
+  "checkpoint_every_batches": 1000,
+  "student_rank_weights": {
+    "global": 1.0,
+    "junction_mean": 0.5,
+    "junction_min": 0.5
+  },
+  "student_checkpoint": "/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260220_192317/full/student/run_1771645952/student_best.pt",
+  "calibration_model": "/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260220_192317/full/calibration/cal_1771646408/calibration_model.joblib",
+  "calibration_meta": "/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260220_192317/full/calibration/cal_1771646408/calibration_meta.json",
+  "outputs": {
+    "student_shortlist": "/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260221_130645/full/ranking/formal_exhaustive_seed13/student_shortlist.csv",
+    "teacher_reranked": "/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260221_130645/full/ranking/formal_exhaustive_seed13/teacher_reranked.csv",
+    "candidate_top": "/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260221_130645/full/ranking/formal_exhaustive_seed13/candidate_top.csv",
+    "candidate_all_scored": "/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260221_130645/full/ranking/formal_exhaustive_seed13/candidate_all_scored.csv"
+  }
+}

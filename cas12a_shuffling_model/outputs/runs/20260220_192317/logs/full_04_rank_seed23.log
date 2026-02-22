@@ -1,0 +1,1 @@
+2026-02-20 20:00:20 | INFO | cas12a_shuffling_model.student.score_student | Loaded student checkpoint: cas12a_shuffling_model/outputs/runs/20260220_192317/full/student/run_1771645952/student_best.pt (device=mps)

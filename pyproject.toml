@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cas12a-shuffling-model"
+version = "0.1.0"
+description = "PLM-guided ranking pipeline for Cas12a domain shuffling (teacher-student distillation)"
+readme = "cas12a_shuffling_model/README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "biopython>=1.85",
+  "pandas>=2.3",
+  "openpyxl>=3.1",
+  "pyyaml>=6.0",
+  "numpy>=1.26,<2.0",
+  "rapidfuzz>=3.13",
+  "torch>=2.2",
+  "transformers>=4.40,<4.56",
+]
+
+[project.optional-dependencies]
+calibration = ["scikit-learn>=1.6"]
+plots = ["matplotlib>=3.9"]
+
+[tool.setuptools]
+package-dir = {"" = "cas12a_shuffling_model/src"}
+
+[tool.setuptools.packages.find]
+where = ["cas12a_shuffling_model/src"]
+
+[project.scripts]
+cas12a-build-domains = "cas12a_shuffling_model.cli.build_domains:main"
+cas12a-reconstruct-actives = "cas12a_shuffling_model.cli.reconstruct_actives:main"
+cas12a-score-teacher = "cas12a_shuffling_model.cli.score_teacher:main"
+cas12a-build-distill-set = "cas12a_shuffling_model.cli.build_distill_set:main"
+cas12a-train-student = "cas12a_shuffling_model.cli.train_student:main"
+cas12a-score-student = "cas12a_shuffling_model.cli.score_student:main"
+cas12a-calibrate = "cas12a_shuffling_model.cli.calibrate:main"
+cas12a-rank-candidates = "cas12a_shuffling_model.cli.rank_candidates:main"
+cas12a-make-figures = "cas12a_shuffling_model.cli.make_figures:main"

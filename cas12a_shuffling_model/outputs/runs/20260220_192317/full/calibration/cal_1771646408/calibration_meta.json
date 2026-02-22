@@ -1,0 +1,29 @@
+{
+  "features": [
+    "global_score",
+    "junction_mean",
+    "junction_min"
+  ],
+  "s_min_threshold": -41.304580260296255,
+  "config": {
+    "C": 1.0,
+    "class_weight_positive": 1.0,
+    "class_weight_background": 0.2,
+    "s_min_quantile": 0.1
+  },
+  "train_summary": {
+    "n_active": 27,
+    "n_background": 320,
+    "active_feature_means": {
+      "global_score": -19.1518075956629,
+      "junction_mean": -28.88789681266047,
+      "junction_min": -40.79788136653078
+    },
+    "background_feature_means": {
+      "global_score": -19.133212411770614,
+      "junction_mean": -28.80151171948237,
+      "junction_min": -40.40861973209284
+    }
+  },
+  "run_id": "cal_1771646408"
+}

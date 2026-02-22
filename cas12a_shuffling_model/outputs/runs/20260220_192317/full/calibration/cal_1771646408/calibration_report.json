@@ -1,0 +1,11 @@
+{
+  "run_id": "cal_1771646408",
+  "active_csv": "cas12a_shuffling_model/data/active/active_chimeras_reconstructed.csv",
+  "background_csv": "cas12a_shuffling_model/outputs/runs/20260220_192317/full/distill_teacher_scores_full.csv",
+  "model_path": "cas12a_shuffling_model/outputs/runs/20260220_192317/full/calibration/cal_1771646408/calibration_model.joblib",
+  "meta_path": "cas12a_shuffling_model/outputs/runs/20260220_192317/full/calibration/cal_1771646408/calibration_meta.json",
+  "n_active": 27,
+  "n_background": 320,
+  "active_calibrated_prob_mean": 0.35329361726681685,
+  "background_calibrated_prob_mean": 0.27280712776553034
+}

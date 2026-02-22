@@ -1,0 +1,4 @@
+2026-02-20 19:36:07 | INFO | cas12a_shuffling_model.student.score_student | Loaded student checkpoint: cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/student/run_1771644700/student_best.pt (device=mps)
+2026-02-20 19:38:02 | INFO | cas12a_shuffling_model.teacher.protgpt2_scorer | Loading ProtGPT2 model: nferruz/ProtGPT2
+2026-02-20 19:38:06 | INFO | cas12a_shuffling_model.teacher.protgpt2_scorer | Teacher device: mps
+2026-02-20 19:38:44 | INFO | __main__ | Ranking completed. run_dir=cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/ranking/rank_1771644967_17

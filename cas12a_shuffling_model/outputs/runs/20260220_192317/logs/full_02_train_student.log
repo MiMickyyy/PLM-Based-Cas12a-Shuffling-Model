@@ -1,0 +1,8 @@
+2026-02-20 19:52:32 | INFO | cas12a_shuffling_model.student.train_student | Student device: mps
+2026-02-20 19:54:07 | INFO | cas12a_shuffling_model.student.train_student | Epoch 1/5 train_loss=950.2874 val_loss=959.2764 global_corr=-0.2109
+2026-02-20 19:55:36 | INFO | cas12a_shuffling_model.student.train_student | Epoch 2/5 train_loss=962.9898 val_loss=965.5184 global_corr=-0.1941
+2026-02-20 19:57:04 | INFO | cas12a_shuffling_model.student.train_student | Epoch 3/5 train_loss=970.8491 val_loss=976.5735 global_corr=-0.2436
+2026-02-20 19:58:32 | INFO | cas12a_shuffling_model.student.train_student | Epoch 4/5 train_loss=986.2838 val_loss=996.9436 global_corr=-0.3013
+2026-02-20 19:59:59 | INFO | cas12a_shuffling_model.student.train_student | Epoch 5/5 train_loss=1013.2419 val_loss=1034.0145 global_corr=-0.2792
+2026-02-20 19:59:59 | INFO | __main__ | Student training finished. Run dir: cas12a_shuffling_model/outputs/runs/20260220_192317/full/student/run_1771645952
+2026-02-20 19:59:59 | INFO | __main__ | Best epoch=1, best_val_loss=959.276392

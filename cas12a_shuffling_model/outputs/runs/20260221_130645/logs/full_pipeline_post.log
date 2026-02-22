@@ -1,0 +1,8 @@
+[2026-02-21 13:30:52] post-run watcher started
+[2026-02-21 13:30:52] waiting ranking pid=15866
+[2026-02-21 13:45:58] post-run watcher started
+[2026-02-21 13:45:58] waiting ranking pid=40150
+[2026-02-21 20:06:47] ranking pid finished
+[2026-02-21 20:06:47] generating figures
+2026-02-21 20:06:49 | INFO | __main__ | Figures written to /Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260221_130645/full/figures/formal_exhaustive_seed13
+[2026-02-21 20:06:49] figures done: /Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260221_130645/full/figures/formal_exhaustive_seed13

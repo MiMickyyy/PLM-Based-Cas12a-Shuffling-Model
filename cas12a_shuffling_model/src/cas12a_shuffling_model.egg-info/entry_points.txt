@@ -1,0 +1,3 @@
+[console_scripts]
+cas12a-build-domains = cas12a_shuffling_model.cli.build_domains:main
+cas12a-reconstruct-actives = cas12a_shuffling_model.cli.reconstruct_actives:main

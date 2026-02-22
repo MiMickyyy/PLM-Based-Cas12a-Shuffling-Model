@@ -1,0 +1,3 @@
+2026-02-20 19:39:47 | INFO | cas12a_shuffling_model.teacher.protgpt2_scorer | Loading ProtGPT2 model: nferruz/ProtGPT2
+2026-02-20 19:39:51 | INFO | cas12a_shuffling_model.teacher.protgpt2_scorer | Teacher device: mps
+2026-02-20 19:52:19 | INFO | __main__ | Wrote distill set rows=347, cache_hits=0, output=cas12a_shuffling_model/outputs/runs/20260220_192317/full/distill_teacher_scores_full.csv

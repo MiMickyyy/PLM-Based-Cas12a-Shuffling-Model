@@ -1,0 +1,64 @@
+seed: 13
+
+paths:
+  domains_dir: domains
+  sequence_results: Sequence_Result.xlsx
+  parents:
+    As: AsCas12a.prot
+    Fn: FnCas12a.prot
+    Lb: LbCas12a.prot
+    Mb2: Mb2Cas12a.prot
+  out_processed_dir: cas12a_shuffling_model/data/processed
+  out_active_dir: cas12a_shuffling_model/data/active
+
+domain_translation:
+  try_reverse_complement: true
+  top_k_per_domain: 3
+  ambiguous_delta_score: 25.0
+  enforce_parent_slot_order: true
+  max_allowed_stop_in_trimmed: 0
+  allowed_parent_overlap_aa: 5
+
+alignment:
+  mode: local
+  matrix: BLOSUM62
+  open_gap_score: -10.0
+  extend_gap_score: -0.5
+
+teacher:
+  model_name: nferruz/ProtGPT2
+  add_spaces: true
+  max_length: null
+  cache_sqlite: cas12a_shuffling_model/data/processed/teacher_scores.sqlite
+  junction_window:
+    left: 15
+    right: 15
+
+actives:
+  slot_columns: null
+  allowed_letters: [A, L, F, M]
+
+distill:
+  n_samples: 6
+  include_actives: false
+  output_csv: cas12a_shuffling_model/data/processed/distill_teacher_scores_smoke.csv
+
+student:
+  distill_csv: cas12a_shuffling_model/data/processed/distill_teacher_scores_smoke.csv
+  output_dir: cas12a_shuffling_model/outputs/student
+  model:
+    embed_dim: 64
+    hidden_dim: 96
+    num_layers: 1
+    dropout: 0.0
+  train:
+    batch_size: 2
+    epochs: 1
+    lr: 0.001
+    weight_decay: 0.0001
+    grad_clip: 1.0
+    val_fraction: 0.34
+    nll_weight: 1.0
+    global_weight: 1.0
+    junction_weight: 1.0
+    num_workers: 0

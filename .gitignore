@@ -1,0 +1,14 @@
+# Python cache / env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# OS/editor
+.DS_Store
+
+# Large temporary benchmark artifacts
+cas12a_shuffling_model/outputs/tmp_exhaustive_*/
+
+# Resume checkpoints (rebuildable)
+cas12a_shuffling_model/outputs/**/student_exhaustive_checkpoint.json

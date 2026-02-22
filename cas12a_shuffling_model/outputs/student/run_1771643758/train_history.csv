@@ -1,0 +1,2 @@
+epoch,train_loss,train_nll,train_global_mse,train_junction_mse,val_loss,val_nll,val_global_mse,val_junction_mse,global_corr,global_mae,global_mse,junction_mean_corr,junction_mean_mae,junction_mean_mse
+1,917.91455078125,3.341129779815674,250.8538360595703,663.7196044921875,910.1651611328125,3.321110248565674,250.8203582763672,656.023681640625,,15.837308406829834,250.82033757304293,,25.337835097312926,642.0058874186227

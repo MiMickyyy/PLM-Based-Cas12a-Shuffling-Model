@@ -1,0 +1,11 @@
+{
+  "run_id": "cal_1771644741",
+  "active_csv": "cas12a_shuffling_model/data/active/active_chimeras_reconstructed.csv",
+  "background_csv": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/distill_teacher_scores_smoke.csv",
+  "model_path": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/calibration/cal_1771644741/calibration_model.joblib",
+  "meta_path": "cas12a_shuffling_model/outputs/runs/20260220_192317/smoke/calibration/cal_1771644741/calibration_meta.json",
+  "n_active": 27,
+  "n_background": 10,
+  "active_calibrated_prob_mean": 0.8705771273396943,
+  "background_calibrated_prob_mean": 0.6988767899886776
+}

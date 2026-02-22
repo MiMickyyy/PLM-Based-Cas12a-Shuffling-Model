@@ -1,0 +1,38 @@
+2026-02-21 13:14:24 | INFO | cas12a_shuffling_model.student.score_student | Loaded student checkpoint: /Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260220_192317/full/student/run_1771645952/student_best.pt (device=mps)
+2026-02-21 13:17:04 | INFO | __main__ | Exhaustive scan progress: 51200/4194304 (1.22%), rate=319.1 combos/s, eta=216.4 min, heap=20000
+2026-02-21 13:20:11 | INFO | __main__ | Exhaustive scan progress: 102400/4194304 (2.44%), rate=295.1 combos/s, eta=231.1 min, heap=20000
+2026-02-21 13:24:26 | INFO | __main__ | Exhaustive scan progress: 153600/4194304 (3.66%), rate=255.0 combos/s, eta=264.1 min, heap=20000
+2026-02-21 13:25:14 | INFO | cas12a_shuffling_model.student.score_student | Loaded student checkpoint: /Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260220_192317/full/student/run_1771645952/student_best.pt (device=mps)
+2026-02-21 13:25:14 | INFO | __main__ | Resume exhaustive scan from index=153600/4194304 (processed=153600, heap=20000)
+
+=== Detached restart at 2026-02-21 13:28:08 ===
+2026-02-21 13:28:10 | INFO | cas12a_shuffling_model.student.score_student | Loaded student checkpoint: /Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260220_192317/full/student/run_1771645952/student_best.pt (device=mps)
+2026-02-21 13:28:10 | INFO | __main__ | Resume exhaustive scan from index=153600/4194304 (processed=153600, heap=20000)
+2026-02-21 13:31:49 | INFO | __main__ | Exhaustive scan progress: 204800/4194304 (4.88%), rate=195.9 combos/s, eta=339.4 min, heap=20000
+2026-02-21 13:39:47 | INFO | __main__ | Exhaustive scan progress: 307200/4194304 (7.32%), rate=201.6 combos/s, eta=321.3 min, heap=20000
+
+=== Detached restart v2 at 2026-02-21 13:45:49 ===
+2026-02-21 13:45:51 | INFO | cas12a_shuffling_model.student.score_student | Loaded student checkpoint: /Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260220_192317/full/student/run_1771645952/student_best.pt (device=mps)
+2026-02-21 14:04:53 | INFO | __main__ | Exhaustive scan progress: 204800/4194304 (4.88%), rate=179.3 combos/s, eta=370.9 min, heap=20000
+2026-02-21 14:22:00 | INFO | __main__ | Exhaustive scan progress: 409600/4194304 (9.77%), rate=188.9 combos/s, eta=334.0 min, heap=20000
+2026-02-21 14:36:44 | INFO | __main__ | Exhaustive scan progress: 614400/4194304 (14.65%), rate=201.2 combos/s, eta=296.5 min, heap=20000
+2026-02-21 14:55:50 | INFO | __main__ | Exhaustive scan progress: 819200/4194304 (19.53%), rate=195.1 combos/s, eta=288.3 min, heap=20000
+2026-02-21 15:11:03 | INFO | __main__ | Exhaustive scan progress: 1024000/4194304 (24.41%), rate=200.3 combos/s, eta=263.8 min, heap=20000
+2026-02-21 15:25:27 | INFO | __main__ | Exhaustive scan progress: 1228800/4194304 (29.30%), rate=205.6 combos/s, eta=240.4 min, heap=20000
+2026-02-21 15:37:00 | INFO | __main__ | Exhaustive scan progress: 1433600/4194304 (34.18%), rate=215.0 combos/s, eta=214.1 min, heap=20000
+2026-02-21 15:52:17 | INFO | __main__ | Exhaustive scan progress: 1638400/4194304 (39.06%), rate=216.0 combos/s, eta=197.2 min, heap=20000
+2026-02-21 16:07:55 | INFO | __main__ | Exhaustive scan progress: 1843200/4194304 (43.95%), rate=216.2 combos/s, eta=181.2 min, heap=20000
+2026-02-21 16:19:29 | INFO | __main__ | Exhaustive scan progress: 2048000/4194304 (48.83%), rate=222.2 combos/s, eta=161.0 min, heap=20000
+2026-02-21 16:34:58 | INFO | __main__ | Exhaustive scan progress: 2252800/4194304 (53.71%), rate=222.0 combos/s, eta=145.8 min, heap=20000
+2026-02-21 16:47:16 | INFO | __main__ | Exhaustive scan progress: 2457600/4194304 (58.59%), rate=225.8 combos/s, eta=128.2 min, heap=20000
+2026-02-21 17:01:35 | INFO | __main__ | Exhaustive scan progress: 2662400/4194304 (63.48%), rate=226.7 combos/s, eta=112.6 min, heap=20000
+2026-02-21 17:17:25 | INFO | __main__ | Exhaustive scan progress: 2867200/4194304 (68.36%), rate=225.9 combos/s, eta=97.9 min, heap=20000
+2026-02-21 17:30:26 | INFO | __main__ | Exhaustive scan progress: 3072000/4194304 (73.24%), rate=228.0 combos/s, eta=82.1 min, heap=20000
+2026-02-21 18:19:09 | INFO | __main__ | Exhaustive scan progress: 3686400/4194304 (87.89%), rate=224.8 combos/s, eta=37.7 min, heap=20000
+2026-02-21 18:37:15 | INFO | __main__ | Exhaustive scan progress: 3891200/4194304 (92.77%), rate=222.5 combos/s, eta=22.7 min, heap=20000
+2026-02-21 18:52:15 | INFO | __main__ | Exhaustive scan progress: 4096000/4194304 (97.66%), rate=222.8 combos/s, eta=7.4 min, heap=20000
+2026-02-21 18:59:17 | INFO | __main__ | Exhaustive scan progress: 4194304/4194304 (100.00%), rate=223.0 combos/s, eta=0.0 min, heap=20000
+2026-02-21 18:59:18 | INFO | __main__ | Exhaustive student scan done. processed=4194304
+2026-02-21 18:59:19 | INFO | cas12a_shuffling_model.teacher.protgpt2_scorer | Loading ProtGPT2 model: nferruz/ProtGPT2
+2026-02-21 18:59:53 | INFO | cas12a_shuffling_model.teacher.protgpt2_scorer | Teacher device: mps
+2026-02-21 20:05:53 | INFO | __main__ | Ranking completed. run_dir=/Users/mickysmacbookpro/Downloads/Domain_Shuffling_ML/cas12a_shuffling_model/outputs/runs/20260221_130645/full/ranking/formal_exhaustive_seed13

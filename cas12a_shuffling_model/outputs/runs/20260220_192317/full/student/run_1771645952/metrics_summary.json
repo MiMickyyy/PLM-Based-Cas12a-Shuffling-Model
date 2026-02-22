@@ -1,0 +1,50 @@
+{
+  "distill_csv": "cas12a_shuffling_model/outputs/runs/20260220_192317/full/distill_teacher_scores_full.csv",
+  "n_records": 347,
+  "n_train": 278,
+  "n_val": 69,
+  "best_epoch": 1,
+  "best_val_loss": 959.2763916015625,
+  "device": "mps",
+  "model_config": {
+    "embed_dim": 128,
+    "hidden_dim": 256,
+    "num_layers": 2,
+    "dropout": 0.1
+  },
+  "train_config": {
+    "seed": 13,
+    "batch_size": 16,
+    "epochs": 5,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "val_fraction": 0.2,
+    "nll_weight": 1.0,
+    "global_weight": 1.0,
+    "junction_weight": 1.0,
+    "num_workers": 0,
+    "device": null
+  },
+  "window": {
+    "left": 25,
+    "right": 25
+  },
+  "final_metrics": {
+    "epoch": 5,
+    "train_loss": 1013.241929796007,
+    "train_nll": 2.2065165042877197,
+    "train_global_mse": 286.5536346435547,
+    "train_junction_mse": 724.4817877875435,
+    "val_loss": 1034.0144775390625,
+    "val_nll": 1.958813238143921,
+    "val_global_mse": 295.56296997070314,
+    "val_junction_mse": 736.4926879882812,
+    "global_corr": -0.27919988456319955,
+    "global_mae": 17.188566137051236,
+    "global_mse": 295.45542373031066,
+    "junction_mean_corr": 0.16818835778652236,
+    "junction_mean_mae": 26.85977641361347,
+    "junction_mean_mse": 721.4763216720072
+  }
+}
