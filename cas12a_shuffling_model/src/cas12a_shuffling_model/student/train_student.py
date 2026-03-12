@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import random
+from collections import Counter
 from functools import partial
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -13,7 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 
 from cas12a_shuffling_model.student.distill_dataset import (
     DistillDataset,
@@ -52,6 +53,11 @@ class StudentTrainConfig:
     nll_weight: float = 1.0
     global_weight: float = 1.0
     junction_weight: float = 1.0
+    natural_global_weight: float = 1.0
+    chimera_global_weight: float = 1.0
+    natural_junction_weight: float = 1.0
+    chimera_junction_weight: float = 1.0
+    balance_source_types: bool = False
     num_workers: int = 0
     device: str | None = None
     cpu_threads: int | None = None
@@ -114,6 +120,37 @@ def _masked_mse(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     if mask.sum() == 0:
         return torch.tensor(0.0, device=pred.device)
     return F.mse_loss(pred[mask], target[mask])
+
+
+def _weighted_masked_mse(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    sample_weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    mask = torch.isfinite(target)
+    if sample_weights is None:
+        if mask.sum() == 0:
+            return torch.tensor(0.0, device=pred.device)
+        return F.mse_loss(pred[mask], target[mask])
+
+    w = sample_weights
+    if w.ndim == 1 and pred.ndim == 2:
+        w = w.unsqueeze(-1).expand_as(pred)
+    if w.ndim != pred.ndim:
+        raise ValueError("sample_weights shape mismatch")
+    if w.device != pred.device:
+        w = w.to(pred.device)
+
+    finite_w = torch.isfinite(w)
+    mask = mask & finite_w
+    if mask.sum() == 0:
+        return torch.tensor(0.0, device=pred.device)
+    wv = torch.clamp(w[mask], min=0.0)
+    denom = wv.sum()
+    if float(denom.item()) <= 0.0:
+        return torch.tensor(0.0, device=pred.device)
+    diff = (pred - target) ** 2
+    return (diff[mask] * wv).sum() / denom
 
 
 def _student_scores_from_token_ll(
@@ -180,6 +217,10 @@ def _run_epoch(
         mask = batch["mask"].to(device)
         teacher_global = batch["teacher_global"].to(device)
         teacher_junctions = batch["teacher_junctions"].to(device)
+        source_is_chimera = batch.get("source_is_chimera")
+        if source_is_chimera is None:
+            source_is_chimera = torch.ones_like(teacher_global, dtype=torch.float32)
+        source_is_chimera = source_is_chimera.to(device)
 
         with torch.set_grad_enabled(is_train):
             logits = model(input_ids)
@@ -193,8 +234,20 @@ def _run_epoch(
                 domain_lengths=batch["domain_lengths"],
                 window=window,
             )
-            global_mse = _masked_mse(student_global, teacher_global)
-            junction_mse = _masked_mse(student_junctions, teacher_junctions)
+            global_weights = torch.where(
+                source_is_chimera > 0.5,
+                torch.tensor(float(train_cfg.chimera_global_weight), device=device),
+                torch.tensor(float(train_cfg.natural_global_weight), device=device),
+            )
+            junction_weights = torch.where(
+                source_is_chimera > 0.5,
+                torch.tensor(float(train_cfg.chimera_junction_weight), device=device),
+                torch.tensor(float(train_cfg.natural_junction_weight), device=device),
+            )
+            global_mse = _weighted_masked_mse(student_global, teacher_global, global_weights)
+            junction_mse = _weighted_masked_mse(
+                student_junctions, teacher_junctions, junction_weights
+            )
 
             loss = (
                 train_cfg.nll_weight * nll
@@ -333,14 +386,44 @@ def train_student_from_distill_csv(
     )
     vocab: AminoAcidVocab = build_default_vocab()
     dataset = DistillDataset(records, vocab=vocab)
+    source_labels = [str(r.source_type).strip().lower() for r in records]
     train_idx, val_idx = split_indices(
-        len(dataset), val_fraction=train_cfg.val_fraction, seed=train_cfg.seed
+        len(dataset),
+        val_fraction=train_cfg.val_fraction,
+        seed=train_cfg.seed,
+        labels=source_labels,
     )
 
+    train_source_counts = Counter(source_labels[i] for i in train_idx)
+    val_source_counts = Counter(source_labels[i] for i in val_idx)
+    logger.info(
+        "Student split: train=%d val=%d train_sources=%s val_sources=%s",
+        len(train_idx),
+        len(val_idx),
+        dict(train_source_counts),
+        dict(val_source_counts),
+    )
+
+    train_subset = Subset(dataset, train_idx)
+    train_sampler = None
+    train_shuffle = True
+    if bool(train_cfg.balance_source_types):
+        train_labels = [source_labels[i] for i in train_idx]
+        label_counts = Counter(train_labels)
+        sample_weights = [1.0 / max(1, label_counts[lb]) for lb in train_labels]
+        train_sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(train_subset),
+            replacement=True,
+        )
+        train_shuffle = False
+        logger.info("Enabled balanced source sampler: counts=%s", dict(label_counts))
+
     train_loader = DataLoader(
-        Subset(dataset, train_idx),
+        train_subset,
         batch_size=train_cfg.batch_size,
-        shuffle=True,
+        shuffle=train_shuffle,
+        sampler=train_sampler,
         num_workers=train_cfg.num_workers,
         collate_fn=partial(collate_distill_batch, pad_id=vocab.pad_id),
     )

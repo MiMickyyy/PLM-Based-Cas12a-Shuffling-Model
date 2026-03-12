@@ -7,7 +7,7 @@ from cas12a_shuffling_model.student.distill_dataset import (
     load_distill_records_from_csv,
     split_indices,
 )
-from cas12a_shuffling_model.student.train_student import _masked_mse
+from cas12a_shuffling_model.student.train_student import _masked_mse, _weighted_masked_mse
 from cas12a_shuffling_model.student.vocab import build_default_vocab
 
 
@@ -111,8 +111,27 @@ def test_split_indices_has_train_and_val():
     assert set(train_idx).isdisjoint(set(val_idx))
 
 
+def test_split_indices_stratified_by_labels():
+    labels = ["natural"] * 8 + ["chimera"] * 12
+    train_idx, val_idx = split_indices(20, val_fraction=0.25, seed=13, labels=labels)
+    assert len(train_idx) > 0
+    assert len(val_idx) > 0
+    train_labels = {labels[i] for i in train_idx}
+    val_labels = {labels[i] for i in val_idx}
+    assert "natural" in train_labels and "chimera" in train_labels
+    assert "natural" in val_labels and "chimera" in val_labels
+
+
 def test_masked_mse_all_nan_returns_zero():
     pred = torch.tensor([[1.0, 2.0]], dtype=torch.float32)
     target = torch.tensor([[float("nan"), float("nan")]], dtype=torch.float32)
     loss = _masked_mse(pred, target)
+    assert float(loss.item()) == 0.0
+
+
+def test_weighted_masked_mse_respects_sample_weights():
+    pred = torch.tensor([1.0, 3.0], dtype=torch.float32)
+    target = torch.tensor([0.0, 3.0], dtype=torch.float32)
+    w = torch.tensor([0.0, 1.0], dtype=torch.float32)
+    loss = _weighted_masked_mse(pred, target, sample_weights=w)
     assert float(loss.item()) == 0.0

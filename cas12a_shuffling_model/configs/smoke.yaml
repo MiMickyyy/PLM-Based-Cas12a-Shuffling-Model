@@ -140,6 +140,11 @@ student:
     nll_weight: 1.0
     global_weight: 1.0
     junction_weight: 1.0
+    natural_global_weight: 1.0
+    chimera_global_weight: 1.0
+    natural_junction_weight: 1.0
+    chimera_junction_weight: 1.0
+    balance_source_types: false
     num_workers: 2
     cpu_threads: 10
     interop_threads: 4

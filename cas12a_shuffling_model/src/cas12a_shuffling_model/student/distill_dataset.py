@@ -180,9 +180,45 @@ def load_distill_records_from_csv(
     return rows
 
 
-def split_indices(n: int, *, val_fraction: float, seed: int) -> tuple[list[int], list[int]]:
+def split_indices(
+    n: int,
+    *,
+    val_fraction: float,
+    seed: int,
+    labels: Sequence[str] | None = None,
+) -> tuple[list[int], list[int]]:
     if n < 2:
         raise ValueError("Need at least 2 examples for train/val split")
+
+    if labels is not None:
+        labels = [str(x) for x in labels]
+        if len(labels) != n:
+            raise ValueError("labels length mismatch")
+        unique_labels = sorted(set(labels))
+        if len(unique_labels) >= 2:
+            rng = np.random.default_rng(seed)
+            label_to_indices: dict[str, list[int]] = {}
+            for i, lb in enumerate(labels):
+                label_to_indices.setdefault(lb, []).append(i)
+
+            train_idx: list[int] = []
+            val_idx: list[int] = []
+            for lb in unique_labels:
+                idx = np.asarray(label_to_indices[lb], dtype=np.int64)
+                rng.shuffle(idx)
+                if len(idx) <= 1:
+                    train_idx.extend(idx.tolist())
+                    continue
+                n_val_lb = int(round(len(idx) * val_fraction))
+                n_val_lb = max(1, n_val_lb)
+                n_val_lb = min(len(idx) - 1, n_val_lb)
+                val_idx.extend(idx[:n_val_lb].tolist())
+                train_idx.extend(idx[n_val_lb:].tolist())
+
+            # Safety fallback to random split in degenerate cases.
+            if len(train_idx) > 0 and len(val_idx) > 0:
+                return sorted(train_idx), sorted(val_idx)
+
     rng = np.random.default_rng(seed)
     idx = np.arange(n)
     rng.shuffle(idx)

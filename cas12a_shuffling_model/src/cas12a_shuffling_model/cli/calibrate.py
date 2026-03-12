@@ -67,6 +67,10 @@ def main() -> None:
     ap.add_argument("--teacher-batch-size", type=int, default=None)
     ap.add_argument("--device", default=None, help="cpu/cuda/mps; default auto")
     ap.add_argument("--background-size", type=int, default=None)
+    ap.add_argument("--calib-c", type=float, default=None)
+    ap.add_argument("--class-weight-positive", type=float, default=None)
+    ap.add_argument("--class-weight-background", type=float, default=None)
+    ap.add_argument("--s-min-quantile", type=float, default=None)
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
 
@@ -142,10 +146,22 @@ def main() -> None:
     )
 
     cal = CalibrationConfig(
-        c=float(cal_cfg.get("C", 1.0)),
-        class_weight_positive=float(cal_cfg.get("class_weight_positive", 1.0)),
-        class_weight_background=float(cal_cfg.get("class_weight_background", 0.2)),
-        s_min_quantile=float(cal_cfg.get("s_min_quantile", 0.1)),
+        c=float(args.calib_c if args.calib_c is not None else cal_cfg.get("C", 1.0)),
+        class_weight_positive=float(
+            args.class_weight_positive
+            if args.class_weight_positive is not None
+            else cal_cfg.get("class_weight_positive", 1.0)
+        ),
+        class_weight_background=float(
+            args.class_weight_background
+            if args.class_weight_background is not None
+            else cal_cfg.get("class_weight_background", 0.2)
+        ),
+        s_min_quantile=float(
+            args.s_min_quantile
+            if args.s_min_quantile is not None
+            else cal_cfg.get("s_min_quantile", 0.1)
+        ),
     )
     artifact = fit_calibrator(active_df=active_df, background_df=background_df, cfg=cal)
     paths = save_calibration_artifact(artifact, out_dir=str(run_dir), run_id=run_id)

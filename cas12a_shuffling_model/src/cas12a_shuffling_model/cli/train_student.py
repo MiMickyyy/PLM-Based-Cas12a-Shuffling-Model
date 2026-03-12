@@ -44,6 +44,11 @@ def _build_train_cfg(cfg: dict, device: str | None = None) -> StudentTrainConfig
         nll_weight=float(t.get("nll_weight", 1.0)),
         global_weight=float(t.get("global_weight", 1.0)),
         junction_weight=float(t.get("junction_weight", 1.0)),
+        natural_global_weight=float(t.get("natural_global_weight", 1.0)),
+        chimera_global_weight=float(t.get("chimera_global_weight", 1.0)),
+        natural_junction_weight=float(t.get("natural_junction_weight", 1.0)),
+        chimera_junction_weight=float(t.get("chimera_junction_weight", 1.0)),
+        balance_source_types=bool(t.get("balance_source_types", False)),
         num_workers=int(t.get("num_workers", 0)),
         device=device,
         cpu_threads=t.get("cpu_threads"),
@@ -60,6 +65,14 @@ def main() -> None:
     ap.add_argument("--device", default=None, help="cpu/cuda/mps; default auto")
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=None)
+    ap.add_argument("--nll-weight", type=float, default=None)
+    ap.add_argument("--global-weight", type=float, default=None)
+    ap.add_argument("--junction-weight", type=float, default=None)
+    ap.add_argument("--natural-global-weight", type=float, default=None)
+    ap.add_argument("--chimera-global-weight", type=float, default=None)
+    ap.add_argument("--natural-junction-weight", type=float, default=None)
+    ap.add_argument("--chimera-junction-weight", type=float, default=None)
+    ap.add_argument("--balance-source-types", action="store_true")
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
 
@@ -83,6 +96,32 @@ def main() -> None:
         train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "epochs": int(args.epochs)})
     if args.batch_size is not None:
         train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "batch_size": int(args.batch_size)})
+    if args.nll_weight is not None:
+        train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "nll_weight": float(args.nll_weight)})
+    if args.global_weight is not None:
+        train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "global_weight": float(args.global_weight)})
+    if args.junction_weight is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "junction_weight": float(args.junction_weight)}
+        )
+    if args.natural_global_weight is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "natural_global_weight": float(args.natural_global_weight)}
+        )
+    if args.chimera_global_weight is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "chimera_global_weight": float(args.chimera_global_weight)}
+        )
+    if args.natural_junction_weight is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "natural_junction_weight": float(args.natural_junction_weight)}
+        )
+    if args.chimera_junction_weight is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "chimera_junction_weight": float(args.chimera_junction_weight)}
+        )
+    if args.balance_source_types:
+        train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "balance_source_types": True})
 
     teacher_window = cfg.get("teacher", {}).get("junction_window", {})
     window = JunctionWindowConfig(
