@@ -12,6 +12,7 @@ from cas12a_shuffling_model.teacher.scoring_utils import (
     load_validated_domains_dict,
     resolve_validated_domains_path,
     score_rows_with_teacher,
+    with_teacher_overrides,
 )
 from cas12a_shuffling_model.utils.logging_utils import setup_logging
 
@@ -26,6 +27,11 @@ def main() -> None:
     ap.add_argument("--validated-domains", default=None)
     ap.add_argument("--combo-column", default="combo_compact")
     ap.add_argument("--sequence-column", default="sequence_aa")
+    ap.add_argument("--teacher-model-name-or-path", default=None)
+    ap.add_argument("--teacher-model-source", choices=["hf", "local"], default=None)
+    ap.add_argument("--teacher-adapter-path", default=None)
+    ap.add_argument("--teacher-model-revision", default=None)
+    ap.add_argument("--teacher-batch-size", type=int, default=None)
     ap.add_argument("--device", default=None, help="cpu/cuda/mps; default auto")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--log-level", default="INFO")
@@ -33,6 +39,13 @@ def main() -> None:
 
     setup_logging(args.log_level)
     config = load_yaml(args.config)
+    config = with_teacher_overrides(
+        config,
+        model_name_or_path=args.teacher_model_name_or_path,
+        model_source=args.teacher_model_source,
+        adapter_path=args.teacher_adapter_path,
+        model_revision=args.teacher_model_revision,
+    )
 
     in_df = pd.read_csv(args.input_csv)
     if args.limit is not None and args.limit > 0:
@@ -51,6 +64,7 @@ def main() -> None:
         validated_domains=validated_domains,
         combo_col=args.combo_column,
         seq_col=args.sequence_column,
+        batch_size=int(args.teacher_batch_size or config.get("search", {}).get("teacher_batch_size", 1)),
     )
 
     Path(args.output_csv).parent.mkdir(parents=True, exist_ok=True)
@@ -61,4 +75,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

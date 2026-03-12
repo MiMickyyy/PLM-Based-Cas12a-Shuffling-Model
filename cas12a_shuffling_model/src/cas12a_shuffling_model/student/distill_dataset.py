@@ -29,6 +29,7 @@ def _to_float_or_nan(x: object) -> float:
 @dataclass(frozen=True)
 class DistillRecord:
     combo_compact: str
+    source_type: str
     sequence_aa: str
     sequence_hash: str
     domain_lengths: list[int]
@@ -53,6 +54,7 @@ class DistillDataset(Dataset):
         target_ids = token_ids
         return {
             "combo_compact": rec.combo_compact,
+            "source_type": rec.source_type,
             "sequence_aa": rec.sequence_aa,
             "sequence_hash": rec.sequence_hash,
             "domain_lengths": rec.domain_lengths,
@@ -82,6 +84,8 @@ def collate_distill_batch(batch: list[dict], pad_id: int) -> dict:
     seqs = []
     hashes = []
     lengths = []
+    source_type = []
+    source_is_chimera = []
     for i, item in enumerate(batch):
         n = item["length"]
         lengths.append(n)
@@ -92,6 +96,9 @@ def collate_distill_batch(batch: list[dict], pad_id: int) -> dict:
         combos.append(item["combo_compact"])
         seqs.append(item["sequence_aa"])
         hashes.append(item["sequence_hash"])
+        st = str(item.get("source_type", "chimera")).strip().lower()
+        source_type.append(st)
+        source_is_chimera.append(1 if st == "chimera" else 0)
 
     return {
         "input_ids": input_ids,
@@ -104,6 +111,8 @@ def collate_distill_batch(batch: list[dict], pad_id: int) -> dict:
         "combo_compact": combos,
         "sequence_aa": seqs,
         "sequence_hash": hashes,
+        "source_type": source_type,
+        "source_is_chimera": torch.tensor(source_is_chimera, dtype=torch.float32),
     }
 
 
@@ -125,7 +134,13 @@ def load_distill_records_from_csv(
     for _, row in df.iterrows():
         combo = ""
         if "combo_compact" in df.columns and pd.notna(row.get("combo_compact")):
-            combo = validate_combo_compact(str(row["combo_compact"]))
+            combo_raw = str(row["combo_compact"]).strip()
+            if combo_raw:
+                combo = validate_combo_compact(combo_raw)
+
+        source_type = str(row.get("source_type", "")).strip().lower()
+        if not source_type:
+            source_type = "chimera" if combo else "natural"
 
         seq = str(row.get("sequence_aa", "")).strip().upper()
         if not seq:
@@ -154,6 +169,7 @@ def load_distill_records_from_csv(
         rows.append(
             DistillRecord(
                 combo_compact=combo,
+                source_type=source_type,
                 sequence_aa=seq,
                 sequence_hash=seq_hash,
                 domain_lengths=domain_lengths,
@@ -175,4 +191,3 @@ def split_indices(n: int, *, val_fraction: float, seed: int) -> tuple[list[int],
     val_idx = sorted(idx[:n_val].tolist())
     train_idx = sorted(idx[n_val:].tolist())
     return train_idx, val_idx
-

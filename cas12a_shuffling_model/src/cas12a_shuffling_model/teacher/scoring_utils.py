@@ -21,6 +21,27 @@ from cas12a_shuffling_model.teacher.score_cache import ScoreCache
 logger = logging.getLogger(__name__)
 
 
+def with_teacher_overrides(
+    config: dict,
+    *,
+    model_name_or_path: str | None = None,
+    model_source: str | None = None,
+    adapter_path: str | None = None,
+    model_revision: str | None = None,
+) -> dict:
+    out = dict(config)
+    out["teacher"] = dict(config.get("teacher", {}))
+    if model_name_or_path:
+        out["teacher"]["model_name_or_path"] = model_name_or_path
+    if model_source:
+        out["teacher"]["model_source"] = model_source
+    if adapter_path is not None:
+        out["teacher"]["adapter_path"] = adapter_path
+    if model_revision is not None:
+        out["teacher"]["model_revision"] = model_revision
+    return out
+
+
 def resolve_validated_domains_path(config: dict, cli_path: str | None = None) -> str:
     if cli_path:
         return cli_path
@@ -43,6 +64,10 @@ def build_teacher_scorer_from_config(config: dict, *, device: str | None = None)
     scorer = ProtGPT2Scorer(
         config=ProtGPT2Config(
             model_name=str(teacher_cfg.get("model_name", "nferruz/ProtGPT2")),
+            model_name_or_path=teacher_cfg.get("model_name_or_path"),
+            model_source=str(teacher_cfg.get("model_source", "hf")),
+            model_revision=teacher_cfg.get("model_revision"),
+            adapter_path=teacher_cfg.get("adapter_path"),
             add_spaces=bool(teacher_cfg.get("add_spaces", True)),
             max_length=teacher_cfg.get("max_length"),
         ),

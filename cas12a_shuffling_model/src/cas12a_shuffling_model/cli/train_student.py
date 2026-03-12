@@ -46,6 +46,8 @@ def _build_train_cfg(cfg: dict, device: str | None = None) -> StudentTrainConfig
         junction_weight=float(t.get("junction_weight", 1.0)),
         num_workers=int(t.get("num_workers", 0)),
         device=device,
+        cpu_threads=t.get("cpu_threads"),
+        interop_threads=t.get("interop_threads"),
     )
 
 
@@ -91,14 +93,31 @@ def main() -> None:
     vd_path = resolve_validated_domains_path(cfg, cli_path=args.validated_domains)
     validated_domains = load_validated_domains_dict(vd_path)
 
-    summary = train_student_from_distill_csv(
-        distill_csv=distill_csv,
-        validated_domains=validated_domains,
-        model_cfg=model_cfg,
-        train_cfg=train_cfg,
-        window=window,
-        out_dir=run_dir,
-    )
+    try:
+        summary = train_student_from_distill_csv(
+            distill_csv=distill_csv,
+            validated_domains=validated_domains,
+            model_cfg=model_cfg,
+            train_cfg=train_cfg,
+            window=window,
+            out_dir=run_dir,
+        )
+    except RuntimeError as e:
+        msg = str(e)
+        auto_device = args.device is None
+        if auto_device and ("mps" in msg.lower() or "metal" in msg.lower()):
+            logger.warning("Student training on MPS failed; retry on CPU. reason=%s", msg)
+            cpu_train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "device": "cpu"})
+            summary = train_student_from_distill_csv(
+                distill_csv=distill_csv,
+                validated_domains=validated_domains,
+                model_cfg=model_cfg,
+                train_cfg=cpu_train_cfg,
+                window=window,
+                out_dir=run_dir,
+            )
+        else:
+            raise
     logger.info("Student training finished. Run dir: %s", run_dir)
     logger.info("Best epoch=%s, best_val_loss=%.6f", summary["best_epoch"], summary["best_val_loss"])
 

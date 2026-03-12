@@ -7,7 +7,7 @@ Goal: score/rank chimeras in a combinatorial design space using interpretable gl
 ## Safety statement
 This study is a pure mathematical/computational modeling project for a mathematical modeling course. Any wet-lab content or results referenced are pre-existing or fictionalized examples used only for modeling context. This work does not involve any activities that impact humans or present biological safety risks. The broader research context is conducted under ethics oversight and approval at the University of California, Riverside, and this computational task itself has no safety risk.
 
-## Quickstart (current milestone: data + reconstruction)
+## Quickstart
 Create a local venv and install deps:
 
 ```bash
@@ -63,12 +63,43 @@ PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model
   --config cas12a_shuffling_model/configs/smoke.yaml
 ```
 
+### Cas12a teacher adaptation (new)
+Continue pretraining ProtGPT2 on `cas12a.fasta` (supports `auto` -> LoRA preferred, fallback partial fine-tune):
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.train_teacher_adapter \
+  --config cas12a_shuffling_model/configs/smoke.yaml \
+  --fasta cas12a.fasta \
+  --method auto \
+  --epochs 1
+```
+
+Evaluate baseline vs adapted teacher on natural validation + active/background chimera diagnostics:
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.eval_teacher_adaptation \
+  --config cas12a_shuffling_model/configs/smoke.yaml \
+  --adapted-model-path /path/to/adapted_teacher_model
+```
+
+### Mixed distillation set (chimera + natural; new)
+Generate mixed-source distill data where natural rows provide `global_score` and nullable `junction_*`:
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.build_distill_set \
+  --config cas12a_shuffling_model/configs/smoke.yaml \
+  --source-mode mixed \
+  --chimera-samples 12 \
+  --natural-samples 16
+```
+
 Train GRU student on distill teacher scores:
 
 ```bash
 PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.train_student \
   --config cas12a_shuffling_model/configs/smoke.yaml
 ```
+`train_student` supports mixed-source masked loss: global distillation on all rows, junction distillation only where junction targets are finite.
 
 Score sequences with student model (single or batch):
 
@@ -93,6 +124,20 @@ Rank candidates (student shortlist + teacher rerank + calibration + diversity):
 PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.rank_candidates \
   --config cas12a_shuffling_model/configs/default.yaml
 ```
+
+To use adapted teacher in rerank/scoring CLIs, pass local model path:
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.rank_candidates \
+  --config cas12a_shuffling_model/configs/default.yaml \
+  --teacher-model-source local \
+  --teacher-model-name-or-path /path/to/adapted_teacher_model
+```
+
+## Notes on reproducibility
+- Teacher cache keys are versioned by `sequence_hash + teacher_model_fingerprint + junction_window`, so baseline and adapted teacher scores do not collide.
+- `cas12a.fasta` is used in two places: teacher adaptation and student mixed distillation data.
+- Long runs are resumable via checkpoints (teacher adaptation and exhaustive ranking modes).
 
 Generate figures from ranked outputs:
 

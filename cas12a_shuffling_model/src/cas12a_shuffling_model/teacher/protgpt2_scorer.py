@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Sequence
 
 from cas12a_shuffling_model.io.loaders import sha256_text
@@ -18,8 +20,23 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class ProtGPT2Config:
     model_name: str = "nferruz/ProtGPT2"
+    model_name_or_path: str | None = None
+    model_source: str = "hf"  # hf | local
+    model_revision: str | None = None
+    adapter_path: str | None = None  # PEFT adapter path
     add_spaces: bool = True
     max_length: Optional[int] = None  # truncate if set
+
+    @property
+    def resolved_model_name_or_path(self) -> str:
+        return str(self.model_name_or_path or self.model_name)
+
+    @property
+    def resolved_adapter_path(self) -> str | None:
+        if self.adapter_path is None:
+            return None
+        p = str(self.adapter_path).strip()
+        return p if p else None
 
 
 @dataclass(frozen=True)
@@ -62,6 +79,68 @@ def detect_torch_device(preferred: str | None = None) -> str:
     return "cpu"
 
 
+def _path_fingerprint(path: str | Path) -> str:
+    p = Path(path)
+    if not p.exists():
+        return f"missing:{p}"
+    if p.is_file():
+        st = p.stat()
+        payload = f"file:{p.resolve()}:{st.st_size}:{int(st.st_mtime)}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+    tracked = [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "model.safetensors.index.json",
+        "pytorch_model.bin",
+        "pytorch_model.bin.index.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "adapter_model.bin",
+    ]
+    parts = []
+    root = p.resolve()
+    for rel in tracked:
+        fp = root / rel
+        if fp.exists():
+            st = fp.stat()
+            parts.append(f"{rel}:{st.st_size}:{int(st.st_mtime)}")
+    if not parts:
+        payload = f"dir:{root}"
+    else:
+        payload = f"dir:{root}|" + "|".join(parts)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def build_teacher_model_fingerprint(cfg: ProtGPT2Config) -> str:
+    base = cfg.resolved_model_name_or_path
+    revision = cfg.model_revision or ""
+    model_source = str(cfg.model_source or "hf").lower()
+    if Path(base).exists():
+        base_sig = f"local:{_path_fingerprint(base)}"
+    else:
+        base_sig = f"hf:{base}@{revision}"
+
+    adapter = cfg.resolved_adapter_path
+    if adapter:
+        if Path(adapter).exists():
+            adapter_sig = f"adapter:{_path_fingerprint(adapter)}"
+        else:
+            adapter_sig = f"adapter:{adapter}"
+    else:
+        adapter_sig = "adapter:none"
+
+    payload = (
+        f"source={model_source}|base={base_sig}|{adapter_sig}|"
+        f"spaces={int(cfg.add_spaces)}|maxlen={cfg.max_length}"
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:20]
+
+
 def _map_token_ll_to_residue_ll(token_ll: list[float], seq_len: int) -> list[float | None]:
     # per-residue list is length seq_len; residue 0 has no previous context.
     if seq_len <= 0:
@@ -96,13 +175,36 @@ class ProtGPT2Scorer:
         self.window = window
         self.cache = cache
         self.device = detect_torch_device(device)
+        self.model_fingerprint = build_teacher_model_fingerprint(config)
         self._model = None
         self._tokenizer = None
+        self._model_max_positions: int | None = None
+
+    def _fallback_to_cpu(self, reason: Exception | str) -> None:
+        if self.device != "mps":
+            raise RuntimeError(reason) if isinstance(reason, Exception) else RuntimeError(str(reason))
+        assert self._model is not None
+        logger.warning("MPS teacher forward failed; fallback to CPU. reason=%s", reason)
+        self._model.to("cpu")
+        self.device = "cpu"
+
+    def _forward_with_fallback(self, *, input_ids, attention_mask=None):
+        assert self._model is not None
+        try:
+            return self._model(input_ids=input_ids, attention_mask=attention_mask).logits
+        except RuntimeError as e:
+            if self.device != "mps":
+                raise
+            self._fallback_to_cpu(e)
+            input_ids = input_ids.to(self.device)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(self.device)
+            return self._model(input_ids=input_ids, attention_mask=attention_mask).logits
 
     def _cache_key(self, seq_hash: str) -> str:
         return (
-            f"protgpt2|{self.config.model_name}|spaces={int(self.config.add_spaces)}|"
-            f"maxlen={self.config.max_length}|wL={self.window.left}|wR={self.window.right}|{seq_hash}"
+            f"protgpt2:v2|fp={self.model_fingerprint}|"
+            f"wL={self.window.left}|wR={self.window.right}|{seq_hash}"
         )
 
     def _lazy_load(self) -> None:
@@ -116,20 +218,56 @@ class ProtGPT2Scorer:
                 "ProtGPT2 scoring requires `torch` and `transformers` installed."
             ) from e
 
-        logger.info("Loading ProtGPT2 model: %s", self.config.model_name)
-        self._tokenizer = AutoTokenizer.from_pretrained(self.config.model_name, use_fast=True)
+        model_ref = self.config.resolved_model_name_or_path
+        logger.info("Loading teacher model: %s", model_ref)
+        tokenizer_kwargs = {"use_fast": True}
+        if self.config.model_revision:
+            tokenizer_kwargs["revision"] = self.config.model_revision
+        self._tokenizer = AutoTokenizer.from_pretrained(model_ref, **tokenizer_kwargs)
         if self._tokenizer.pad_token_id is None and self._tokenizer.eos_token_id is not None:
             self._tokenizer.pad_token = self._tokenizer.eos_token
-        # Newer transformers blocks loading .bin with torch<2.6 for security reasons.
-        # Force safetensors to keep compatibility with Python 3.9 environments.
-        self._model = AutoModelForCausalLM.from_pretrained(
-            self.config.model_name, use_safetensors=True
-        )
+        model_kwargs = {"use_safetensors": True}
+        if self.config.model_revision:
+            model_kwargs["revision"] = self.config.model_revision
+        try:
+            self._model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
+        except Exception:
+            # Fallback for local checkpoints saved as .bin.
+            model_kwargs.pop("use_safetensors", None)
+            self._model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
+
+        adapter_path = self.config.resolved_adapter_path
+        if adapter_path:
+            try:
+                from peft import PeftModel
+            except Exception as e:  # pragma: no cover
+                raise ImportError(
+                    "adapter_path was provided but `peft` is not installed. "
+                    "Install peft or remove teacher.adapter_path."
+                ) from e
+            logger.info("Loading teacher adapter: %s", adapter_path)
+            self._model = PeftModel.from_pretrained(self._model, adapter_path)
+            if hasattr(self._model, "merge_and_unload"):
+                try:
+                    self._model = self._model.merge_and_unload()
+                except Exception:
+                    # Keep adapter-wrapped model if merge fails.
+                    pass
+
         if self._model.config.pad_token_id is None and self._tokenizer.pad_token_id is not None:
             self._model.config.pad_token_id = self._tokenizer.pad_token_id
+        model_max_positions = getattr(self._model.config, "n_positions", None) or getattr(
+            self._model.config, "max_position_embeddings", None
+        )
+        self._model_max_positions = int(model_max_positions) if model_max_positions else None
         self._model.to(self.device)
         self._model.eval()
-        logger.info("Teacher device: %s", self.device)
+        logger.info(
+            "Teacher device: %s | model_fingerprint=%s | model_max_positions=%s",
+            self.device,
+            self.model_fingerprint,
+            self._model_max_positions,
+        )
 
     def score_one(
         self,
@@ -160,11 +298,18 @@ class ProtGPT2Scorer:
         import torch.nn.functional as F
 
         text = _format_sequence(seq_aa, self.config.add_spaces)
-        enc = self._tokenizer(text, add_special_tokens=False, return_tensors="pt")
+        token_max_length = self._model_max_positions
+        enc = self._tokenizer(
+            text,
+            add_special_tokens=False,
+            truncation=token_max_length is not None,
+            max_length=token_max_length,
+            return_tensors="pt",
+        )
         input_ids = enc["input_ids"].to(self.device)
 
         with torch.no_grad():
-            logits = self._model(input_ids).logits  # [B, T, V]
+            logits = self._forward_with_fallback(input_ids=input_ids)  # [B, T, V]
 
         # Next-token log-probabilities for positions 1..T-1.
         logits = logits[:, :-1, :]
@@ -197,7 +342,9 @@ class ProtGPT2Scorer:
             global_score=global_score,
             junction_scores=junction_scores,
             meta={
-                "model_name": self.config.model_name,
+                "model_name_or_path": self.config.resolved_model_name_or_path,
+                "adapter_path": self.config.resolved_adapter_path,
+                "model_fingerprint": self.model_fingerprint,
                 "add_spaces": self.config.add_spaces,
                 "device": self.device,
             },
@@ -271,13 +418,17 @@ class ProtGPT2Scorer:
                     texts,
                     add_special_tokens=False,
                     padding=True,
+                    truncation=self._model_max_positions is not None,
+                    max_length=self._model_max_positions,
                     return_tensors="pt",
                 )
                 input_ids = enc["input_ids"].to(self.device)
                 attention_mask = enc["attention_mask"].to(self.device)
 
                 with torch.no_grad():
-                    logits = self._model(input_ids=input_ids, attention_mask=attention_mask).logits
+                    logits = self._forward_with_fallback(
+                        input_ids=input_ids, attention_mask=attention_mask
+                    )
 
                 logits = logits[:, :-1, :]
                 targets = input_ids[:, 1:]
@@ -316,7 +467,9 @@ class ProtGPT2Scorer:
                         global_score=global_score,
                         junction_scores=junction_scores,
                         meta={
-                            "model_name": self.config.model_name,
+                            "model_name_or_path": self.config.resolved_model_name_or_path,
+                            "adapter_path": self.config.resolved_adapter_path,
+                            "model_fingerprint": self.model_fingerprint,
                             "add_spaces": self.config.add_spaces,
                             "device": self.device,
                             "batched": True,

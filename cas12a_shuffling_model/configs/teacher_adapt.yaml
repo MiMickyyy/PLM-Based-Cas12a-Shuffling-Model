@@ -1,0 +1,54 @@
+seed: 13
+
+paths:
+  atlas_fasta: cas12a.fasta
+  out_processed_dir: cas12a_shuffling_model/data/processed
+  out_active_dir: cas12a_shuffling_model/data/active
+
+teacher:
+  model_source: hf
+  model_name_or_path: nferruz/ProtGPT2
+  model_name: nferruz/ProtGPT2
+  model_revision: null
+  adapter_path: null
+  add_spaces: true
+  max_length: null
+  cache_sqlite: cas12a_shuffling_model/data/processed/teacher_scores.sqlite
+  junction_window:
+    left: 25
+    right: 25
+
+teacher_adapt:
+  output_dir: cas12a_shuffling_model/outputs/teacher_adapt
+  base_model_name_or_path: nferruz/ProtGPT2
+  base_model_revision: null
+  add_spaces: true
+  method: auto
+  partial_last_n_layers: 2
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  min_len: 300
+  max_len_filter: null
+  deduplicate: false
+  train_val_fraction: 0.1
+  max_train_sequences: 12000
+  max_val_sequences: 2000
+  max_length: 2048
+  batch_size: 1
+  eval_batch_size: 1
+  grad_accum_steps: 8
+  epochs: 1
+  lr: 0.0001
+  weight_decay: 0.0001
+  max_grad_norm: 1.0
+  num_workers: 4
+  cpu_threads: 10
+  interop_threads: 4
+  log_every_steps: 20
+
+teacher_adapt_eval:
+  output_dir: cas12a_shuffling_model/outputs/teacher_adapt_eval
+  natural_eval_size: 128
+  background_size: 128
+  score_batch_size: 1

@@ -3,6 +3,7 @@ seed: 13
 paths:
   domains_dir: domains
   sequence_results: Sequence_Result.xlsx
+  atlas_fasta: cas12a.fasta
   parents:
     As: AsCas12a.prot
     Fn: FnCas12a.prot
@@ -26,7 +27,11 @@ alignment:
   extend_gap_score: -0.5
 
 teacher:
+  model_source: hf
+  model_name_or_path: nferruz/ProtGPT2
   model_name: nferruz/ProtGPT2
+  model_revision: null
+  adapter_path: null
   add_spaces: true
   max_length: null
   cache_sqlite: cas12a_shuffling_model/data/processed/teacher_scores.sqlite
@@ -39,9 +44,53 @@ actives:
   allowed_letters: [A, L, F, M]
 
 distill:
+  source_mode: chimera
   n_samples: 64
+  chimera_samples: 64
+  natural_samples: 256
   include_actives: true
+  teacher_batch_size: 1
+  natural_fasta: cas12a.fasta
+  natural_min_len: 300
+  natural_max_len: null
+  natural_deduplicate: false
+  natural_with_junction: false
   output_csv: cas12a_shuffling_model/data/processed/distill_teacher_scores.csv
+
+teacher_adapt:
+  output_dir: cas12a_shuffling_model/outputs/teacher_adapt
+  base_model_name_or_path: nferruz/ProtGPT2
+  base_model_revision: null
+  add_spaces: true
+  method: auto
+  partial_last_n_layers: 2
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  min_len: 300
+  max_len_filter: null
+  deduplicate: false
+  train_val_fraction: 0.1
+  max_train_sequences: 12000
+  max_val_sequences: 2000
+  max_length: 2048
+  batch_size: 1
+  eval_batch_size: 1
+  grad_accum_steps: 8
+  epochs: 1
+  lr: 0.0001
+  weight_decay: 0.0001
+  max_grad_norm: 1.0
+  num_workers: 4
+  cpu_threads: 10
+  interop_threads: 4
+  log_every_steps: 20
+
+teacher_adapt_eval:
+  output_dir: cas12a_shuffling_model/outputs/teacher_adapt_eval
+  natural_eval_size: 128
+  background_size: 128
+  score_batch_size: 1
 
 calibration:
   output_dir: cas12a_shuffling_model/outputs/calibration
@@ -91,4 +140,6 @@ student:
     nll_weight: 1.0
     global_weight: 1.0
     junction_weight: 1.0
-    num_workers: 0
+    num_workers: 4
+    cpu_threads: 10
+    interop_threads: 4

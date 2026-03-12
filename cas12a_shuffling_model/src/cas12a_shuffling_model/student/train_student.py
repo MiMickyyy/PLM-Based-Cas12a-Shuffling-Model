@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import random
+from functools import partial
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Sequence
@@ -53,6 +54,8 @@ class StudentTrainConfig:
     junction_weight: float = 1.0
     num_workers: int = 0
     device: str | None = None
+    cpu_threads: int | None = None
+    interop_threads: int | None = None
 
 
 def detect_torch_device(preferred: str | None = None) -> str:
@@ -73,11 +76,24 @@ def _set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _set_cpu_threads(cfg: StudentTrainConfig) -> None:
+    if cfg.cpu_threads is not None and int(cfg.cpu_threads) > 0:
+        torch.set_num_threads(int(cfg.cpu_threads))
+    if cfg.interop_threads is not None and int(cfg.interop_threads) > 0:
+        try:
+            torch.set_num_interop_threads(int(cfg.interop_threads))
+        except RuntimeError:
+            pass
+
+
 def _nanmean_np(values: Sequence[float]) -> float:
     arr = np.asarray(values, dtype=np.float64)
     if arr.size == 0:
         return float("nan")
-    return float(np.nanmean(arr))
+    mask = np.isfinite(arr)
+    if not mask.any():
+        return float("nan")
+    return float(np.mean(arr[mask]))
 
 
 def _pearson_np(a: Sequence[float], b: Sequence[float]) -> float:
@@ -217,6 +233,7 @@ def _evaluate_regression_metrics(
     global_true = []
     jmean_pred = []
     jmean_true = []
+    source_type = []
 
     for batch in loader:
         input_ids = batch["input_ids"].to(device)
@@ -233,12 +250,16 @@ def _evaluate_regression_metrics(
         )
         s_global = s_global.cpu().tolist()
         s_junction = s_junction.cpu().numpy()
+        source_batch = [str(x).strip().lower() for x in batch.get("source_type", [])]
+        if len(source_batch) != len(s_global):
+            source_batch = ["unknown"] * len(s_global)
 
         for i in range(len(s_global)):
             global_pred.append(float(s_global[i]))
             global_true.append(float(teacher_global[i]))
             jmean_pred.append(_nanmean_np(s_junction[i].tolist()))
             jmean_true.append(_nanmean_np(teacher_junctions[i].tolist()))
+            source_type.append(source_batch[i])
 
     g_true = np.asarray(global_true, dtype=np.float64)
     g_pred = np.asarray(global_pred, dtype=np.float64)
@@ -262,6 +283,33 @@ def _evaluate_regression_metrics(
         if jm_mask.any()
         else float("nan"),
     }
+
+    source_arr = np.asarray(source_type, dtype=object)
+    for st in ("natural", "chimera"):
+        st_mask = source_arr == st
+        st_global_mask = st_mask & g_mask
+        st_jm_mask = st_mask & jm_mask
+        metrics[f"n_{st}"] = int(st_mask.sum())
+        metrics[f"global_corr_{st}"] = (
+            _pearson_np(g_true[st_global_mask], g_pred[st_global_mask])
+            if st_global_mask.any()
+            else float("nan")
+        )
+        metrics[f"global_mae_{st}"] = (
+            float(np.mean(np.abs(g_true[st_global_mask] - g_pred[st_global_mask])))
+            if st_global_mask.any()
+            else float("nan")
+        )
+        metrics[f"global_mse_{st}"] = (
+            float(np.mean((g_true[st_global_mask] - g_pred[st_global_mask]) ** 2))
+            if st_global_mask.any()
+            else float("nan")
+        )
+        metrics[f"junction_mean_corr_{st}"] = (
+            _pearson_np(jm_true[st_jm_mask], jm_pred[st_jm_mask])
+            if st_jm_mask.any()
+            else float("nan")
+        )
     return metrics
 
 
@@ -275,6 +323,7 @@ def train_student_from_distill_csv(
     out_dir: str,
 ) -> dict[str, Any]:
     _set_seed(train_cfg.seed)
+    _set_cpu_threads(train_cfg)
     device = detect_torch_device(train_cfg.device)
     logger.info("Student device: %s", device)
 
@@ -293,14 +342,14 @@ def train_student_from_distill_csv(
         batch_size=train_cfg.batch_size,
         shuffle=True,
         num_workers=train_cfg.num_workers,
-        collate_fn=lambda b: collate_distill_batch(b, pad_id=vocab.pad_id),
+        collate_fn=partial(collate_distill_batch, pad_id=vocab.pad_id),
     )
     val_loader = DataLoader(
         Subset(dataset, val_idx),
         batch_size=train_cfg.batch_size,
         shuffle=False,
         num_workers=train_cfg.num_workers,
-        collate_fn=lambda b: collate_distill_batch(b, pad_id=vocab.pad_id),
+        collate_fn=partial(collate_distill_batch, pad_id=vocab.pad_id),
     )
 
     model = GRUAutoregressiveLM(

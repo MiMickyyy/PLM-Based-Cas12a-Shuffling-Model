@@ -21,6 +21,7 @@ from cas12a_shuffling_model.teacher.scoring_utils import (
     load_validated_domains_dict,
     resolve_validated_domains_path,
     score_rows_with_teacher,
+    with_teacher_overrides,
 )
 from cas12a_shuffling_model.utils.logging_utils import setup_logging
 
@@ -38,6 +39,7 @@ def _ensure_teacher_scored(
     validated_domains,
     combo_col: str = "combo_compact",
     seq_col: str = "sequence_aa",
+    teacher_batch_size: int = 1,
 ) -> pd.DataFrame:
     if _has_teacher_features(df):
         return df.copy()
@@ -47,6 +49,7 @@ def _ensure_teacher_scored(
         validated_domains=validated_domains,
         combo_col=combo_col,
         seq_col=seq_col,
+        batch_size=int(teacher_batch_size),
     )
 
 
@@ -57,6 +60,11 @@ def main() -> None:
     ap.add_argument("--background-csv", default=None)
     ap.add_argument("--validated-domains", default=None)
     ap.add_argument("--out-dir", default=None)
+    ap.add_argument("--teacher-model-name-or-path", default=None)
+    ap.add_argument("--teacher-model-source", choices=["hf", "local"], default=None)
+    ap.add_argument("--teacher-adapter-path", default=None)
+    ap.add_argument("--teacher-model-revision", default=None)
+    ap.add_argument("--teacher-batch-size", type=int, default=None)
     ap.add_argument("--device", default=None, help="cpu/cuda/mps; default auto")
     ap.add_argument("--background-size", type=int, default=None)
     ap.add_argument("--log-level", default="INFO")
@@ -64,6 +72,13 @@ def main() -> None:
 
     setup_logging(args.log_level)
     cfg = load_yaml(args.config)
+    cfg = with_teacher_overrides(
+        cfg,
+        model_name_or_path=args.teacher_model_name_or_path,
+        model_source=args.teacher_model_source,
+        adapter_path=args.teacher_adapter_path,
+        model_revision=args.teacher_model_revision,
+    )
 
     active_csv = args.active_csv or cfg.get("paths", {}).get("out_active_dir")
     if active_csv and Path(active_csv).is_dir():
@@ -81,6 +96,11 @@ def main() -> None:
         out_dir = "cas12a_shuffling_model/outputs/calibration"
 
     bg_size = int(args.background_size) if args.background_size else int(cal_cfg.get("background_size", 300))
+    teacher_batch_size = int(
+        args.teacher_batch_size
+        if args.teacher_batch_size is not None
+        else cfg.get("search", {}).get("teacher_batch_size", 1)
+    )
 
     run_id = f"cal_{int(time.time())}"
     run_dir = Path(out_dir) / run_id
@@ -95,6 +115,7 @@ def main() -> None:
         df=active_df_raw,
         scorer=teacher_scorer,
         validated_domains=validated_domains,
+        teacher_batch_size=teacher_batch_size,
     )
     if "combo_compact" in active_df.columns:
         active_combos = set(active_df["combo_compact"].astype(str).tolist())
@@ -102,6 +123,10 @@ def main() -> None:
         active_combos = set()
 
     background_df_raw = pd.read_csv(background_csv)
+    if "source_type" in background_df_raw.columns:
+        background_df_raw = background_df_raw[
+            background_df_raw["source_type"].astype(str).str.lower() == "chimera"
+        ].copy()
     if "combo_compact" in background_df_raw.columns and active_combos:
         background_df_raw = background_df_raw[
             ~background_df_raw["combo_compact"].astype(str).isin(active_combos)
@@ -113,6 +138,7 @@ def main() -> None:
         df=background_df_raw,
         scorer=teacher_scorer,
         validated_domains=validated_domains,
+        teacher_batch_size=teacher_batch_size,
     )
 
     cal = CalibrationConfig(
@@ -146,4 +172,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

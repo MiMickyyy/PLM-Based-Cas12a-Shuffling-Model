@@ -103,6 +103,22 @@ class StudentScorer:
         self.model.eval()
         logger.info("Loaded student checkpoint: %s (device=%s)", self.checkpoint_path, self.device)
 
+    def _fallback_to_cpu(self, reason: Exception | str) -> None:
+        if self.device != "mps":
+            raise RuntimeError(reason) if isinstance(reason, Exception) else RuntimeError(str(reason))
+        logger.warning("MPS student forward failed; fallback to CPU. reason=%s", reason)
+        self.model.to("cpu")
+        self.device = "cpu"
+
+    def _forward_logits(self, x: torch.Tensor) -> torch.Tensor:
+        try:
+            return self.model(x)
+        except RuntimeError as e:
+            if self.device != "mps":
+                raise
+            self._fallback_to_cpu(e)
+            return self.model(x.to(self.device))
+
     @torch.no_grad()
     def score_one(self, *, sequence_aa: str, domain_lengths: Sequence[int] | None = None) -> StudentScore:
         seq = str(sequence_aa).strip().upper()
@@ -115,7 +131,9 @@ class StudentScorer:
         x = torch.tensor(input_ids, dtype=torch.long, device=self.device).unsqueeze(0)
         y = torch.tensor(targets, dtype=torch.long, device=self.device).unsqueeze(0)
 
-        logits = self.model(x)
+        logits = self._forward_logits(x)
+        if y.device != logits.device:
+            y = y.to(logits.device)
         log_probs = F.log_softmax(logits, dim=-1)
         token_ll = log_probs.gather(dim=-1, index=y.unsqueeze(-1)).squeeze(-1)[0]
         token_ll_list = [float(v) for v in token_ll.detach().cpu().tolist()]
@@ -181,7 +199,11 @@ class StudentScorer:
                 y[i, :n] = torch.tensor(toks, dtype=torch.long, device=self.device)
                 mask[i, :n] = True
 
-            logits = self.model(x)
+            logits = self._forward_logits(x)
+            if y.device != logits.device:
+                y = y.to(logits.device)
+            if mask.device != logits.device:
+                mask = mask.to(logits.device)
             log_probs = F.log_softmax(logits, dim=-1)
             token_ll = log_probs.gather(dim=-1, index=y.unsqueeze(-1)).squeeze(-1)
 

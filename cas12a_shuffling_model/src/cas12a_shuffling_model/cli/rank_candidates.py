@@ -21,6 +21,7 @@ from cas12a_shuffling_model.teacher.scoring_utils import (
     load_validated_domains_dict,
     resolve_validated_domains_path,
     score_rows_with_teacher,
+    with_teacher_overrides,
 )
 from cas12a_shuffling_model.utils.logging_utils import setup_logging
 
@@ -341,6 +342,10 @@ def main() -> None:
     ap.add_argument("--checkpoint-every-batches", type=int, default=None)
     ap.add_argument("--device", default=None, help="student device; teacher auto-detect")
     ap.add_argument("--teacher-device", default=None)
+    ap.add_argument("--teacher-model-name-or-path", default=None)
+    ap.add_argument("--teacher-model-source", choices=["hf", "local"], default=None)
+    ap.add_argument("--teacher-adapter-path", default=None)
+    ap.add_argument("--teacher-model-revision", default=None)
     ap.add_argument("--resume", action="store_true", default=True)
     ap.add_argument("--no-resume", action="store_false", dest="resume")
     ap.add_argument("--log-level", default="INFO")
@@ -348,6 +353,13 @@ def main() -> None:
 
     setup_logging(args.log_level)
     cfg = load_yaml(args.config)
+    cfg = with_teacher_overrides(
+        cfg,
+        model_name_or_path=args.teacher_model_name_or_path,
+        model_source=args.teacher_model_source,
+        adapter_path=args.teacher_adapter_path,
+        model_revision=args.teacher_model_revision,
+    )
     search_cfg = cfg.get("search", {})
     cal_cfg = cfg.get("calibration", {})
 
@@ -526,6 +538,13 @@ def main() -> None:
         "student_checkpoint": checkpoint,
         "calibration_model": cal_model_path,
         "calibration_meta": cal_meta_path,
+        "teacher": {
+            "model_name_or_path": cfg.get("teacher", {}).get("model_name_or_path")
+            or cfg.get("teacher", {}).get("model_name"),
+            "model_source": cfg.get("teacher", {}).get("model_source", "hf"),
+            "model_revision": cfg.get("teacher", {}).get("model_revision"),
+            "adapter_path": cfg.get("teacher", {}).get("adapter_path"),
+        },
         "outputs": {
             "student_shortlist": str(shortlist_csv),
             "teacher_reranked": str(teacher_reranked_csv),
