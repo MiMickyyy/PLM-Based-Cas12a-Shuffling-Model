@@ -126,10 +126,14 @@ student:
   distill_csv: cas12a_shuffling_model/data/processed/distill_teacher_scores.csv
   output_dir: cas12a_shuffling_model/outputs/student
   model:
-    embed_dim: 128
+    model_type: transformer
+    embed_dim: 192
     hidden_dim: 256
-    num_layers: 2
+    num_layers: 4
+    num_heads: 6
+    ff_dim: 768
     dropout: 0.1
+    max_positions: 4096
   train:
     batch_size: 8
     epochs: 3

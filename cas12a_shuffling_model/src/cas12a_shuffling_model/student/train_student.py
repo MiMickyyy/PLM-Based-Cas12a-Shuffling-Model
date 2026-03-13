@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from torch import nn
 from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 
 from cas12a_shuffling_model.student.distill_dataset import (
@@ -23,6 +24,7 @@ from cas12a_shuffling_model.student.distill_dataset import (
     split_indices,
 )
 from cas12a_shuffling_model.student.gru_model import GRUAutoregressiveLM
+from cas12a_shuffling_model.student.transformer_model import TransformerAutoregressiveLM
 from cas12a_shuffling_model.student.vocab import AminoAcidVocab, build_default_vocab
 from cas12a_shuffling_model.teacher.junction_scoring import (
     JunctionWindowConfig,
@@ -35,10 +37,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class StudentModelConfig:
+    model_type: str = "gru"
     embed_dim: int = 128
     hidden_dim: int = 256
     num_layers: int = 2
     dropout: float = 0.1
+    num_heads: int = 4
+    ff_dim: int = 512
+    max_positions: int = 4096
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,43 @@ class StudentTrainConfig:
     device: str | None = None
     cpu_threads: int | None = None
     interop_threads: int | None = None
+
+
+def _normalize_model_type(model_type: str | None) -> str:
+    mt = str(model_type or "gru").strip().lower()
+    if mt in {"gru", "rnn"}:
+        return "gru"
+    if mt in {"transformer", "tx", "small_transformer"}:
+        return "transformer"
+    raise ValueError(f"Unsupported student model_type: {model_type}")
+
+
+def build_student_model(
+    *,
+    cfg: StudentModelConfig,
+    vocab_size: int,
+    pad_idx: int,
+) -> nn.Module:
+    model_type = _normalize_model_type(cfg.model_type)
+    if model_type == "gru":
+        return GRUAutoregressiveLM(
+            vocab_size=vocab_size,
+            embed_dim=cfg.embed_dim,
+            hidden_dim=cfg.hidden_dim,
+            num_layers=cfg.num_layers,
+            dropout=cfg.dropout,
+            pad_idx=pad_idx,
+        )
+    return TransformerAutoregressiveLM(
+        vocab_size=vocab_size,
+        embed_dim=cfg.embed_dim,
+        num_layers=cfg.num_layers,
+        num_heads=cfg.num_heads,
+        ff_dim=cfg.ff_dim,
+        dropout=cfg.dropout,
+        pad_idx=pad_idx,
+        max_positions=cfg.max_positions,
+    )
 
 
 def detect_torch_device(preferred: str | None = None) -> str:
@@ -200,7 +243,7 @@ def _student_scores_from_token_ll(
 
 def _run_epoch(
     *,
-    model: GRUAutoregressiveLM,
+    model: nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer | None,
     device: str,
@@ -276,7 +319,7 @@ def _run_epoch(
 @torch.no_grad()
 def _evaluate_regression_metrics(
     *,
-    model: GRUAutoregressiveLM,
+    model: nn.Module,
     loader: DataLoader,
     device: str,
     window: JunctionWindowConfig,
@@ -435,14 +478,13 @@ def train_student_from_distill_csv(
         collate_fn=partial(collate_distill_batch, pad_id=vocab.pad_id),
     )
 
-    model = GRUAutoregressiveLM(
+    model_type = _normalize_model_type(model_cfg.model_type)
+    model = build_student_model(
+        cfg=model_cfg,
         vocab_size=vocab.size,
-        embed_dim=model_cfg.embed_dim,
-        hidden_dim=model_cfg.hidden_dim,
-        num_layers=model_cfg.num_layers,
-        dropout=model_cfg.dropout,
         pad_idx=vocab.pad_id,
     ).to(device)
+    logger.info("Student model_type=%s", model_type)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=train_cfg.lr, weight_decay=train_cfg.weight_decay
     )
@@ -501,6 +543,7 @@ def train_student_from_distill_csv(
             {
                 "model_state_dict": model.state_dict(),
                 "model_config": asdict(model_cfg),
+                "model_type": model_type,
                 "vocab_stoi": vocab.stoi,
                 "epoch": epoch,
             },
@@ -513,6 +556,7 @@ def train_student_from_distill_csv(
                 {
                     "model_state_dict": model.state_dict(),
                     "model_config": asdict(model_cfg),
+                    "model_type": model_type,
                     "vocab_stoi": vocab.stoi,
                     "epoch": epoch,
                 },

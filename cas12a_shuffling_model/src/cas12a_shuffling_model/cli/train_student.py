@@ -24,10 +24,14 @@ logger = logging.getLogger(__name__)
 def _build_model_cfg(cfg: dict) -> StudentModelConfig:
     m = cfg.get("student", {}).get("model", {})
     return StudentModelConfig(
+        model_type=str(m.get("model_type", "gru")),
         embed_dim=int(m.get("embed_dim", 128)),
         hidden_dim=int(m.get("hidden_dim", 256)),
         num_layers=int(m.get("num_layers", 2)),
         dropout=float(m.get("dropout", 0.1)),
+        num_heads=int(m.get("num_heads", 4)),
+        ff_dim=int(m.get("ff_dim", 512)),
+        max_positions=int(m.get("max_positions", 4096)),
     )
 
 
@@ -63,6 +67,14 @@ def main() -> None:
     ap.add_argument("--validated-domains", default=None)
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--device", default=None, help="cpu/cuda/mps; default auto")
+    ap.add_argument("--model-type", choices=["gru", "transformer"], default=None)
+    ap.add_argument("--embed-dim", type=int, default=None)
+    ap.add_argument("--hidden-dim", type=int, default=None)
+    ap.add_argument("--num-layers", type=int, default=None)
+    ap.add_argument("--dropout", type=float, default=None)
+    ap.add_argument("--num-heads", type=int, default=None)
+    ap.add_argument("--ff-dim", type=int, default=None)
+    ap.add_argument("--max-positions", type=int, default=None)
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=None)
     ap.add_argument("--nll-weight", type=float, default=None)
@@ -91,6 +103,23 @@ def main() -> None:
     run_dir = str(Path(run_dir) / f"run_{int(time.time())}")
 
     model_cfg = _build_model_cfg(cfg)
+    if args.model_type is not None:
+        model_cfg = StudentModelConfig(**{**model_cfg.__dict__, "model_type": str(args.model_type)})
+    if args.embed_dim is not None:
+        model_cfg = StudentModelConfig(**{**model_cfg.__dict__, "embed_dim": int(args.embed_dim)})
+    if args.hidden_dim is not None:
+        model_cfg = StudentModelConfig(**{**model_cfg.__dict__, "hidden_dim": int(args.hidden_dim)})
+    if args.num_layers is not None:
+        model_cfg = StudentModelConfig(**{**model_cfg.__dict__, "num_layers": int(args.num_layers)})
+    if args.dropout is not None:
+        model_cfg = StudentModelConfig(**{**model_cfg.__dict__, "dropout": float(args.dropout)})
+    if args.num_heads is not None:
+        model_cfg = StudentModelConfig(**{**model_cfg.__dict__, "num_heads": int(args.num_heads)})
+    if args.ff_dim is not None:
+        model_cfg = StudentModelConfig(**{**model_cfg.__dict__, "ff_dim": int(args.ff_dim)})
+    if args.max_positions is not None:
+        model_cfg = StudentModelConfig(**{**model_cfg.__dict__, "max_positions": int(args.max_positions)})
+
     train_cfg = _build_train_cfg(cfg, device=args.device)
     if args.epochs is not None:
         train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "epochs": int(args.epochs)})

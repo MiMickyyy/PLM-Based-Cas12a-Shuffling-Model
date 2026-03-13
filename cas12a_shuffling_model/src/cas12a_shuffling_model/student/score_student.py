@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, Optional, Sequence
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 from cas12a_shuffling_model.io.loaders import sha256_text
 from cas12a_shuffling_model.search.combo_compact import (
@@ -17,6 +18,7 @@ from cas12a_shuffling_model.search.combo_compact import (
     validate_combo_compact,
 )
 from cas12a_shuffling_model.student.gru_model import GRUAutoregressiveLM
+from cas12a_shuffling_model.student.transformer_model import TransformerAutoregressiveLM
 from cas12a_shuffling_model.student.vocab import AminoAcidVocab, BOS_TOKEN, PAD_TOKEN, UNK_TOKEN
 from cas12a_shuffling_model.teacher.junction_scoring import (
     JunctionWindowConfig,
@@ -76,9 +78,18 @@ class StudentScorer:
         self.checkpoint_path = checkpoint_path
         self.window = window
         self.device = detect_torch_device(device)
-        self.model: GRUAutoregressiveLM
+        self.model: nn.Module
         self.vocab: AminoAcidVocab
         self._load_checkpoint()
+
+    @staticmethod
+    def _normalize_model_type(model_type: str | None) -> str:
+        mt = str(model_type or "gru").strip().lower()
+        if mt in {"gru", "rnn"}:
+            return "gru"
+        if mt in {"transformer", "tx", "small_transformer"}:
+            return "transformer"
+        raise ValueError(f"Unsupported student model_type in checkpoint: {model_type}")
 
     def _load_checkpoint(self) -> None:
         ckpt = torch.load(self.checkpoint_path, map_location="cpu")
@@ -90,18 +101,36 @@ class StudentScorer:
         self.vocab = _vocab_from_stoi(vocab_stoi)
 
         mc = ckpt["model_config"]
-        self.model = GRUAutoregressiveLM(
-            vocab_size=len(self.vocab.stoi),
-            embed_dim=int(mc["embed_dim"]),
-            hidden_dim=int(mc["hidden_dim"]),
-            num_layers=int(mc["num_layers"]),
-            dropout=float(mc.get("dropout", 0.0)),
-            pad_idx=self.vocab.pad_id,
-        )
+        model_type = self._normalize_model_type(ckpt.get("model_type", mc.get("model_type", "gru")))
+        if model_type == "gru":
+            self.model = GRUAutoregressiveLM(
+                vocab_size=len(self.vocab.stoi),
+                embed_dim=int(mc["embed_dim"]),
+                hidden_dim=int(mc["hidden_dim"]),
+                num_layers=int(mc["num_layers"]),
+                dropout=float(mc.get("dropout", 0.0)),
+                pad_idx=self.vocab.pad_id,
+            )
+        else:
+            self.model = TransformerAutoregressiveLM(
+                vocab_size=len(self.vocab.stoi),
+                embed_dim=int(mc.get("embed_dim", 256)),
+                num_layers=int(mc.get("num_layers", 4)),
+                num_heads=int(mc.get("num_heads", 4)),
+                ff_dim=int(mc.get("ff_dim", 512)),
+                dropout=float(mc.get("dropout", 0.1)),
+                pad_idx=self.vocab.pad_id,
+                max_positions=int(mc.get("max_positions", 4096)),
+            )
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.to(self.device)
         self.model.eval()
-        logger.info("Loaded student checkpoint: %s (device=%s)", self.checkpoint_path, self.device)
+        logger.info(
+            "Loaded student checkpoint: %s (device=%s, model_type=%s)",
+            self.checkpoint_path,
+            self.device,
+            model_type,
+        )
 
     def _fallback_to_cpu(self, reason: Exception | str) -> None:
         if self.device != "mps":

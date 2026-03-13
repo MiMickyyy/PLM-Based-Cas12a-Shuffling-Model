@@ -3,6 +3,7 @@ import pandas as pd
 
 from cas12a_shuffling_model.student.gru_model import GRUAutoregressiveLM
 from cas12a_shuffling_model.student.score_student import StudentScorer
+from cas12a_shuffling_model.student.transformer_model import TransformerAutoregressiveLM
 from cas12a_shuffling_model.student.vocab import build_default_vocab
 from cas12a_shuffling_model.teacher.junction_scoring import JunctionWindowConfig
 
@@ -25,6 +26,38 @@ def _make_ckpt(path):
                 "hidden_dim": 24,
                 "num_layers": 1,
                 "dropout": 0.0,
+            },
+            "vocab_stoi": vocab.stoi,
+            "epoch": 0,
+        },
+        path,
+    )
+
+
+def _make_transformer_ckpt(path):
+    vocab = build_default_vocab()
+    model = TransformerAutoregressiveLM(
+        vocab_size=vocab.size,
+        embed_dim=32,
+        num_layers=1,
+        num_heads=4,
+        ff_dim=64,
+        dropout=0.0,
+        pad_idx=vocab.pad_id,
+        max_positions=128,
+    )
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "model_type": "transformer",
+            "model_config": {
+                "model_type": "transformer",
+                "embed_dim": 32,
+                "num_layers": 1,
+                "num_heads": 4,
+                "ff_dim": 64,
+                "dropout": 0.0,
+                "max_positions": 128,
             },
             "vocab_stoi": vocab.stoi,
             "epoch": 0,
@@ -66,3 +99,16 @@ def test_student_score_batch_rows_schema(tmp_path):
     for i in range(1, 11):
         assert f"junction_{i:02d}" in out.columns
 
+
+def test_student_score_transformer_checkpoint(tmp_path):
+    ckpt = tmp_path / "student_transformer.pt"
+    _make_transformer_ckpt(str(ckpt))
+    scorer = StudentScorer(
+        checkpoint_path=str(ckpt),
+        window=JunctionWindowConfig(left=2, right=2),
+        device="cpu",
+    )
+    score = scorer.score_one(sequence_aa="ACDEFGHIKLM", domain_lengths=[1] * 11)
+    assert isinstance(score.sequence_hash, str)
+    assert isinstance(score.global_score, float)
+    assert len(score.junction_scores) == 10
