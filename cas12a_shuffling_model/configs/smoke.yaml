@@ -112,6 +112,9 @@ search:
   teacher_batch_size: 1
   progress_every: 100
   checkpoint_every_batches: 10
+  shortlist_strategy: weighted
+  union_per_metric_size: 40
+  rerank_selection: weighted
   student_rank_weights:
     global: 1.0
     junction_mean: 0.5

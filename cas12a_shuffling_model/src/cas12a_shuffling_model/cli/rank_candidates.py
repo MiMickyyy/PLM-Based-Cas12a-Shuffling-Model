@@ -4,6 +4,8 @@ import argparse
 import heapq
 import json
 import logging
+import math
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -29,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 TOTAL_COMBOS = 4**11
 ALPHABET = ("A", "L", "F", "M")
+UNION_METRICS_DEFAULT = ("student_rank_score", "global_score", "junction_mean", "junction_min")
 
 
 def _latest_calibration_paths(base_dir: str) -> tuple[str, str]:
@@ -66,6 +69,104 @@ def _student_rank_score(
     )
 
 
+def _heap_push_topk(
+    heap_rows: list[tuple[float, str, dict]],
+    item: tuple[float, str, dict],
+    *,
+    max_size: int,
+) -> None:
+    if len(heap_rows) < max_size:
+        heapq.heappush(heap_rows, item)
+        return
+    if item[0] > heap_rows[0][0]:
+        heapq.heapreplace(heap_rows, item)
+
+
+def _build_union_shortlist_from_metric_heaps(
+    metric_heaps: dict[str, list[tuple[float, str, dict]]],
+) -> pd.DataFrame:
+    rows_by_combo: dict[str, dict[str, Any]] = {}
+    sources_by_combo: dict[str, set[str]] = {}
+    for metric_name, heap_rows in metric_heaps.items():
+        for _, combo, row in heap_rows:
+            if combo not in rows_by_combo:
+                rows_by_combo[combo] = dict(row)
+                sources_by_combo[combo] = set()
+            sources_by_combo[combo].add(metric_name)
+
+    out_rows: list[dict[str, Any]] = []
+    for combo, row in rows_by_combo.items():
+        rec = dict(row)
+        rec["shortlist_sources"] = ",".join(sorted(sources_by_combo.get(combo, set())))
+        out_rows.append(rec)
+    if not out_rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(out_rows)
+    sort_cols = [c for c in ("student_rank_score", "global_score", "junction_mean", "junction_min") if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(sort_cols, ascending=[False] * len(sort_cols))
+    return df.reset_index(drop=True)
+
+
+def _select_rerank_candidates_union(
+    *,
+    shortlist_df: pd.DataFrame,
+    teacher_rerank_size: int,
+    metrics: Sequence[str],
+) -> pd.DataFrame:
+    if len(shortlist_df) <= teacher_rerank_size:
+        return shortlist_df.copy().reset_index(drop=True)
+
+    combo_col = "combo_compact"
+    available_metrics = [m for m in metrics if m in shortlist_df.columns]
+    if not available_metrics:
+        return shortlist_df.head(teacher_rerank_size).copy().reset_index(drop=True)
+
+    metric_lists: list[list[str]] = []
+    for metric in available_metrics:
+        metric_vals = pd.to_numeric(shortlist_df[metric], errors="coerce")
+        metric_df = shortlist_df[metric_vals.notna()].copy()
+        metric_df = metric_df.sort_values(metric, ascending=False)
+        metric_lists.append(metric_df[combo_col].astype(str).tolist())
+
+    selected: list[str] = []
+    selected_set: set[str] = set()
+    pointers = [0] * len(metric_lists)
+
+    while len(selected) < teacher_rerank_size:
+        progressed = False
+        for idx, combos in enumerate(metric_lists):
+            while pointers[idx] < len(combos):
+                combo = combos[pointers[idx]]
+                pointers[idx] += 1
+                if combo in selected_set:
+                    continue
+                selected.append(combo)
+                selected_set.add(combo)
+                progressed = True
+                break
+            if len(selected) >= teacher_rerank_size:
+                break
+        if not progressed:
+            break
+
+    if len(selected) < teacher_rerank_size:
+        fallback = shortlist_df.sort_values("student_rank_score", ascending=False)
+        for combo in fallback[combo_col].astype(str).tolist():
+            if combo in selected_set:
+                continue
+            selected.append(combo)
+            selected_set.add(combo)
+            if len(selected) >= teacher_rerank_size:
+                break
+
+    order_map = {combo: i for i, combo in enumerate(selected)}
+    out = shortlist_df[shortlist_df[combo_col].astype(str).isin(selected_set)].copy()
+    out["__rr_order"] = out[combo_col].astype(str).map(order_map)
+    out = out.sort_values("__rr_order").drop(columns=["__rr_order"])
+    return out.head(teacher_rerank_size).reset_index(drop=True)
+
+
 def _slot_lookup(validated_domains: dict[tuple[str, int], str]) -> tuple[list[dict[str, str]], list[dict[str, int]]]:
     letter_to_parent = {"A": "As", "L": "Lb", "F": "Fn", "M": "Mb2"}
     seq_lookup: list[dict[str, str]] = []
@@ -101,7 +202,18 @@ def _save_exhaustive_checkpoint(
     processed: int,
     heap_rows: list[tuple[float, str, dict]],
     started_at: float,
+    union_metric_heaps: dict[str, list[tuple[float, str, dict]]] | None = None,
 ) -> None:
+    union_serialized: dict[str, list[dict[str, Any]]] = {}
+    for metric_name, items in (union_metric_heaps or {}).items():
+        union_serialized[str(metric_name)] = [
+            {
+                "score": float(score),
+                "combo_compact": combo,
+                "row": row,
+            }
+            for score, combo, row in items
+        ]
     payload = {
         "next_index": int(next_index),
         "total": int(total),
@@ -115,6 +227,7 @@ def _save_exhaustive_checkpoint(
             }
             for score, combo, row in heap_rows
         ],
+        "union_metric_heaps": union_serialized,
     }
     checkpoint_path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -130,12 +243,25 @@ def _load_exhaustive_checkpoint(checkpoint_path: Path) -> dict[str, Any]:
                 dict(item["row"]),
             )
         )
+    union_metric_heaps: dict[str, list[tuple[float, str, dict]]] = {}
+    for metric_name, items in dict(payload.get("union_metric_heaps", {})).items():
+        metric_rows: list[tuple[float, str, dict]] = []
+        for item in items:
+            metric_rows.append(
+                (
+                    float(item["score"]),
+                    str(item["combo_compact"]),
+                    dict(item["row"]),
+                )
+            )
+        union_metric_heaps[str(metric_name)] = metric_rows
     return {
         "next_index": int(payload.get("next_index", 0)),
         "total": int(payload.get("total", TOTAL_COMBOS)),
         "processed": int(payload.get("processed", 0)),
         "started_at": float(payload.get("started_at", time.time())),
         "heap_rows": heap_rows,
+        "union_metric_heaps": union_metric_heaps,
     }
 
 
@@ -152,6 +278,9 @@ def _run_exhaustive_student_scan(
     w_global: float,
     w_jmean: float,
     w_jmin: float,
+    shortlist_strategy: str = "weighted",
+    union_metrics: Sequence[str] = UNION_METRICS_DEFAULT,
+    union_per_metric_size: int | None = None,
 ) -> pd.DataFrame:
     checkpoint_path = run_dir / "student_exhaustive_checkpoint.json"
     shortlist_csv = run_dir / "student_shortlist.csv"
@@ -159,9 +288,15 @@ def _run_exhaustive_student_scan(
 
     seq_lookup, len_lookup = _slot_lookup(validated_domains)
     heap_rows: list[tuple[float, str, dict]] = []
+    union_metric_heaps: dict[str, list[tuple[float, str, dict]]] = {
+        m: [] for m in union_metrics
+    }
     started_at = time.time()
     next_index = 0
     processed = 0
+    per_metric_keep = int(union_per_metric_size or shortlist_size)
+    per_metric_keep = max(1, per_metric_keep)
+    shortlist_strategy = str(shortlist_strategy).strip().lower()
 
     if resume and shortlist_csv.exists() and summary_json.exists():
         logger.info("Reuse existing exhaustive shortlist: %s", shortlist_csv)
@@ -173,6 +308,10 @@ def _run_exhaustive_student_scan(
         processed = state["processed"]
         started_at = state["started_at"]
         heap_rows = state["heap_rows"]
+        loaded_union = state.get("union_metric_heaps", {})
+        for metric_name in union_metric_heaps.keys():
+            if metric_name in loaded_union:
+                union_metric_heaps[metric_name] = loaded_union[metric_name]
         logger.info(
             "Resume exhaustive scan from index=%d/%d (processed=%d, heap=%d)",
             next_index,
@@ -206,9 +345,6 @@ def _run_exhaustive_student_scan(
                 + w_jmin * float(score.junction_min)
             )
 
-            if len(heap_rows) >= shortlist_size and rank_score <= heap_rows[0][0]:
-                continue
-
             row = {
                 "combo_compact": combo,
                 "sequence_hash": score.sequence_hash,
@@ -221,10 +357,25 @@ def _run_exhaustive_student_scan(
                 row[f"junction_{i:02d}"] = v
 
             item = (rank_score, combo, row)
-            if len(heap_rows) < shortlist_size:
-                heapq.heappush(heap_rows, item)
+            if shortlist_strategy == "union":
+                _heap_push_topk(heap_rows, item, max_size=shortlist_size)
+                for metric_name in union_metric_heaps.keys():
+                    metric_val = row.get(metric_name)
+                    if metric_val is None:
+                        continue
+                    try:
+                        metric_score = float(metric_val)
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(metric_score):
+                        continue
+                    _heap_push_topk(
+                        union_metric_heaps[metric_name],
+                        (metric_score, combo, row),
+                        max_size=per_metric_keep,
+                    )
             else:
-                heapq.heapreplace(heap_rows, item)
+                _heap_push_topk(heap_rows, item, max_size=shortlist_size)
 
         processed += (end_index - next_index)
         next_index = end_index
@@ -252,11 +403,25 @@ def _run_exhaustive_student_scan(
                 processed=processed,
                 heap_rows=heap_rows,
                 started_at=started_at,
+                union_metric_heaps=union_metric_heaps if shortlist_strategy == "union" else None,
             )
 
     # Final shortlist
-    shortlist_rows = [item[2] for item in heap_rows]
-    shortlist_df = pd.DataFrame(shortlist_rows)
+    if shortlist_strategy == "union":
+        union_df = _build_union_shortlist_from_metric_heaps(union_metric_heaps)
+        if len(union_df) == 0:
+            shortlist_rows = [item[2] for item in heap_rows]
+            shortlist_df = pd.DataFrame(shortlist_rows)
+        else:
+            shortlist_df = union_df
+            logger.info(
+                "Union shortlist built from metrics=%s; rows=%d",
+                list(union_metric_heaps.keys()),
+                len(shortlist_df),
+            )
+    else:
+        shortlist_rows = [item[2] for item in heap_rows]
+        shortlist_df = pd.DataFrame(shortlist_rows)
     shortlist_df = shortlist_df.sort_values("student_rank_score", ascending=False).reset_index(drop=True)
     shortlist_df.to_csv(shortlist_csv, index=False)
 
@@ -265,6 +430,9 @@ def _run_exhaustive_student_scan(
         "total_combos": TOTAL_COMBOS,
         "processed_combos": processed,
         "shortlist_size": int(len(shortlist_df)),
+        "shortlist_strategy": shortlist_strategy,
+        "union_metrics": list(union_metric_heaps.keys()) if shortlist_strategy == "union" else [],
+        "union_per_metric_size": per_metric_keep if shortlist_strategy == "union" else None,
         "started_at": started_at,
         "finished_at": time.time(),
         "runtime_seconds": time.time() - started_at,
@@ -340,6 +508,9 @@ def main() -> None:
     ap.add_argument("--teacher-batch-size", type=int, default=None)
     ap.add_argument("--progress-every", type=int, default=None)
     ap.add_argument("--checkpoint-every-batches", type=int, default=None)
+    ap.add_argument("--shortlist-strategy", choices=["weighted", "union"], default=None)
+    ap.add_argument("--union-per-metric-size", type=int, default=None)
+    ap.add_argument("--rerank-selection", choices=["weighted", "union"], default=None)
     ap.add_argument("--device", default=None, help="student device; teacher auto-detect")
     ap.add_argument("--teacher-device", default=None)
     ap.add_argument("--teacher-model-name-or-path", default=None)
@@ -394,6 +565,17 @@ def main() -> None:
         if args.checkpoint_every_batches is not None
         else int(search_cfg.get("checkpoint_every_batches", 200))
     )
+    shortlist_strategy = str(
+        args.shortlist_strategy if args.shortlist_strategy is not None else search_cfg.get("shortlist_strategy", "weighted")
+    ).strip().lower()
+    union_per_metric_size = (
+        int(args.union_per_metric_size)
+        if args.union_per_metric_size is not None
+        else int(search_cfg.get("union_per_metric_size", shortlist_size))
+    )
+    rerank_selection = str(
+        args.rerank_selection if args.rerank_selection is not None else search_cfg.get("rerank_selection", shortlist_strategy)
+    ).strip().lower()
     weights = search_cfg.get("student_rank_weights", {})
     w_global = float(weights.get("global", 1.0))
     w_jmean = float(weights.get("junction_mean", 0.5))
@@ -423,6 +605,11 @@ def main() -> None:
         cal_base = cal_cfg.get("output_dir", "cas12a_shuffling_model/outputs/calibration")
         cal_model_path, cal_meta_path = _latest_calibration_paths(cal_base)
     cal_artifact = load_calibration_artifact(cal_model_path, cal_meta_path)
+    try:
+        shutil.copy2(cal_model_path, run_dir / "calibration_model.joblib")
+        shutil.copy2(cal_meta_path, run_dir / "calibration_meta.json")
+    except OSError as e:
+        logger.warning("Failed to copy calibration artifacts into run dir: %s", e)
 
     shortlist_csv = run_dir / "student_shortlist.csv"
     teacher_reranked_csv = run_dir / "teacher_reranked.csv"
@@ -442,6 +629,8 @@ def main() -> None:
             w_global=w_global,
             w_jmean=w_jmean,
             w_jmin=w_jmin,
+            shortlist_strategy=shortlist_strategy,
+            union_per_metric_size=union_per_metric_size,
         )
     else:
         shortlist_df = _run_sampled_student_scan(
@@ -460,7 +649,14 @@ def main() -> None:
     if args.resume and teacher_reranked_csv.exists():
         teacher_df = pd.read_csv(teacher_reranked_csv)
     else:
-        rerank_df = shortlist_df.head(teacher_rerank_size).copy()
+        if rerank_selection == "union":
+            rerank_df = _select_rerank_candidates_union(
+                shortlist_df=shortlist_df,
+                teacher_rerank_size=teacher_rerank_size,
+                metrics=UNION_METRICS_DEFAULT,
+            )
+        else:
+            rerank_df = shortlist_df.head(teacher_rerank_size).copy()
         teacher_df = score_rows_with_teacher(
             rows_df=rerank_df,
             scorer=teacher_scorer,
@@ -530,6 +726,9 @@ def main() -> None:
         "teacher_batch_size": teacher_batch_size,
         "progress_every": progress_every,
         "checkpoint_every_batches": checkpoint_every_batches,
+        "shortlist_strategy": shortlist_strategy,
+        "union_per_metric_size": union_per_metric_size if shortlist_strategy == "union" else None,
+        "rerank_selection": rerank_selection,
         "student_rank_weights": {
             "global": w_global,
             "junction_mean": w_jmean,
