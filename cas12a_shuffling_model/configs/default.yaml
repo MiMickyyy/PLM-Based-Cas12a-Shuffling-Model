@@ -147,32 +147,45 @@ student:
     weight_decay: 0.0001
     grad_clip: 1.0
     val_fraction: 0.2
-    nll_weight: 0.05
+    nll_weight: 0.02
     global_weight: 0.2
     junction_weight: 0.2
     natural_global_weight: 1.0
     chimera_global_weight: 1.0
     natural_junction_weight: 1.0
     chimera_junction_weight: 1.0
-    correlation_weight: 0.3
+    correlation_weight: 0.5
     correlation_on_chimera_only: true
     pairwise_weight: 1.0
     pairwise_margin: 0.02
     pairwise_pairs_per_batch: 128
     pairwise_min_teacher_diff: 0.01
     pairwise_ignore_close_diff: 0.01
-    pairwise_hard_ratio: 0.5
-    pairwise_medium_ratio: 0.3
+    pairwise_hard_ratio: 0.3
+    pairwise_medium_ratio: 0.5
     pairwise_easy_ratio: 0.2
     pairwise_length_bin_size: 64
+    pairwise_margin_alpha: 0.5
+    pairwise_margin_min: 0.0
+    pairwise_margin_max: 0.25
     pairwise_on_chimera_only: true
-    pairwise_warmup_epochs: 2
+    pairwise_warmup_epochs: 1
+    pairwise_ramp_epochs: 4
     stage_a_natural_epochs: 2
     stage_a_batch_size: 8
     stage_b_chimera_only: true
+    stage_b_lr_scale: 0.5
     normalize_teacher_global: true
     normalize_length_bin_size: 64
     normalize_min_group_size: 32
+    nll_final_weight: 0.005
+    nll_decay_start_epoch: 3
+    nll_decay_end_epoch: 8
+    top_loss_weight: 0.15
+    top_fraction: 0.10
+    top_margin: 0.0
+    top_pairs_per_batch: 64
+    top_on_chimera_only: true
     topk_fracs: [0.01, 0.05, 0.10]
     best_metric: global_corr_chimera
     best_metric_mode: max

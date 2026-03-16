@@ -70,18 +70,31 @@ class StudentTrainConfig:
     pairwise_pairs_per_batch: int = 64
     pairwise_min_teacher_diff: float = 0.01
     pairwise_ignore_close_diff: float = 0.0
-    pairwise_hard_ratio: float = 0.5
-    pairwise_medium_ratio: float = 0.3
+    pairwise_hard_ratio: float = 0.3
+    pairwise_medium_ratio: float = 0.5
     pairwise_easy_ratio: float = 0.2
     pairwise_length_bin_size: int = 64
+    pairwise_margin_alpha: float = 0.5
+    pairwise_margin_min: float = 0.0
+    pairwise_margin_max: float = 0.3
     pairwise_on_chimera_only: bool = True
     pairwise_warmup_epochs: int = 0
+    pairwise_ramp_epochs: int = 0
     stage_a_natural_epochs: int = 0
     stage_a_batch_size: int | None = None
     stage_b_chimera_only: bool = False
+    stage_b_lr_scale: float = 1.0
     normalize_teacher_global: bool = False
     normalize_length_bin_size: int = 64
     normalize_min_group_size: int = 32
+    nll_final_weight: float | None = None
+    nll_decay_start_epoch: int = 1
+    nll_decay_end_epoch: int = 1
+    top_loss_weight: float = 0.0
+    top_fraction: float = 0.1
+    top_margin: float = 0.0
+    top_pairs_per_batch: int = 64
+    top_on_chimera_only: bool = True
     topk_fracs: tuple[float, ...] = (0.01, 0.05, 0.10)
     best_metric: str = "val_loss"
     best_metric_mode: str = "auto"
@@ -309,6 +322,37 @@ def _correlation_alignment_loss(
     return 1.0 - corr
 
 
+def _linear_ramp_progress(epoch: int, warmup_epochs: int, ramp_epochs: int) -> float:
+    ep = int(epoch)
+    wu = max(0, int(warmup_epochs))
+    rp = max(0, int(ramp_epochs))
+    if ep <= wu:
+        return 0.0
+    if rp <= 0:
+        return 1.0
+    return float(min(1.0, max(0.0, (ep - wu) / float(rp))))
+
+
+def _linear_decay_weight(
+    epoch: int,
+    start_weight: float,
+    end_weight: float,
+    start_epoch: int,
+    end_epoch: int,
+) -> float:
+    ep = int(epoch)
+    se = int(start_epoch)
+    ee = int(end_epoch)
+    if ep <= se:
+        return float(start_weight)
+    if ep >= ee:
+        return float(end_weight)
+    if ee <= se:
+        return float(end_weight)
+    p = (ep - se) / float(ee - se)
+    return float(start_weight + p * (end_weight - start_weight))
+
+
 def _sample_pair_indices(
     *,
     teacher_values: torch.Tensor,
@@ -441,10 +485,51 @@ def _pairwise_ranking_loss(
     jj = jj[nonzero]
     teacher_sign = teacher_sign[nonzero]
     teacher_diff = teacher_diff[nonzero]
-    margin_term = teacher_sign * (s[ii] - s[jj]) - float(cfg.pairwise_margin)
+    adaptive_margin = torch.clamp(
+        float(cfg.pairwise_margin) + float(cfg.pairwise_margin_alpha) * teacher_diff,
+        min=float(cfg.pairwise_margin_min),
+        max=float(cfg.pairwise_margin_max),
+    )
+    margin_term = teacher_sign * (s[ii] - s[jj]) - adaptive_margin
     pair_loss = F.softplus(-margin_term)
     weight = 1.0 + torch.clamp(teacher_diff, min=0.0)
     return torch.mean(pair_loss * weight)
+
+
+def _top_focus_ranking_loss(
+    *,
+    student_global: torch.Tensor,
+    teacher_global: torch.Tensor,
+    source_is_chimera: torch.Tensor,
+    cfg: StudentTrainConfig,
+) -> torch.Tensor:
+    if float(cfg.top_loss_weight) <= 0.0:
+        return torch.tensor(0.0, device=student_global.device)
+    mask = torch.isfinite(student_global) & torch.isfinite(teacher_global)
+    if bool(cfg.top_on_chimera_only):
+        mask = mask & (source_is_chimera > 0.5)
+    idx = torch.nonzero(mask, as_tuple=False).squeeze(-1)
+    if idx.numel() < 4:
+        return torch.tensor(0.0, device=student_global.device)
+    t = teacher_global[idx]
+    s = student_global[idx]
+    n = int(t.shape[0])
+    top_fraction = float(cfg.top_fraction)
+    if top_fraction <= 0.0:
+        return torch.tensor(0.0, device=student_global.device)
+    k = max(1, min(n - 1, int(round(n * top_fraction))))
+    order = torch.argsort(t, descending=True)
+    top_idx = order[:k]
+    rest_idx = order[k:]
+    if rest_idx.numel() == 0:
+        return torch.tensor(0.0, device=student_global.device)
+    n_pairs = int(cfg.top_pairs_per_batch)
+    if n_pairs <= 0:
+        n_pairs = int(top_idx.numel() * rest_idx.numel())
+    ti = top_idx[torch.randint(0, top_idx.numel(), (n_pairs,), device=t.device)]
+    rj = rest_idx[torch.randint(0, rest_idx.numel(), (n_pairs,), device=t.device)]
+    margin_term = (s[ti] - s[rj]) - float(cfg.top_margin)
+    return F.softplus(-margin_term).mean()
 
 
 def _student_scores_from_token_ll(
@@ -510,6 +595,7 @@ def _run_epoch(
         "junction_mse": 0.0,
         "corr_loss": 0.0,
         "pairwise_loss": 0.0,
+        "top_loss": 0.0,
         "batches": 0,
     }
 
@@ -564,6 +650,12 @@ def _run_epoch(
                 seq_lengths=seq_lengths,
                 cfg=train_cfg,
             )
+            top_loss = _top_focus_ranking_loss(
+                student_global=student_global,
+                teacher_global=teacher_global,
+                source_is_chimera=source_is_chimera,
+                cfg=train_cfg,
+            )
 
             loss = (
                 train_cfg.nll_weight * nll
@@ -571,6 +663,7 @@ def _run_epoch(
                 + train_cfg.junction_weight * junction_mse
                 + train_cfg.correlation_weight * corr_loss
                 + train_cfg.pairwise_weight * pairwise_loss
+                + train_cfg.top_loss_weight * top_loss
             )
 
             if is_train:
@@ -585,10 +678,11 @@ def _run_epoch(
         stats["junction_mse"] += float(junction_mse.item())
         stats["corr_loss"] += float(corr_loss.item())
         stats["pairwise_loss"] += float(pairwise_loss.item())
+        stats["top_loss"] += float(top_loss.item())
         stats["batches"] += 1
 
     if stats["batches"] > 0:
-        for k in ("loss", "nll", "global_mse", "junction_mse", "corr_loss", "pairwise_loss"):
+        for k in ("loss", "nll", "global_mse", "junction_mse", "corr_loss", "pairwise_loss", "top_loss"):
             stats[k] /= stats["batches"]
     return stats
 
@@ -964,14 +1058,39 @@ def train_student_from_distill_csv(
         dict(train_source_counts),
         dict(val_source_counts),
     )
+    stage_b_lr = float(train_cfg.lr) * float(train_cfg.stage_b_lr_scale)
+    for pg in optimizer.param_groups:
+        pg["lr"] = stage_b_lr
+    logger.info("Stage B optimizer lr set to %.6g (scale=%.3f)", stage_b_lr, float(train_cfg.stage_b_lr_scale))
 
     for epoch in range(1, total_epochs + 1):
-        warmup_pairwise_off = epoch <= int(train_cfg.pairwise_warmup_epochs)
-        effective_cfg = train_cfg
-        if warmup_pairwise_off and float(train_cfg.pairwise_weight) > 0.0:
-            effective_cfg = StudentTrainConfig(
-                **{**train_cfg.__dict__, "pairwise_weight": 0.0}
-            )
+        pairwise_factor = _linear_ramp_progress(
+            epoch=epoch,
+            warmup_epochs=train_cfg.pairwise_warmup_epochs,
+            ramp_epochs=train_cfg.pairwise_ramp_epochs,
+        )
+        effective_pairwise_weight = float(train_cfg.pairwise_weight) * pairwise_factor
+        effective_top_weight = float(train_cfg.top_loss_weight) * pairwise_factor
+        nll_final_weight = (
+            float(train_cfg.nll_weight)
+            if train_cfg.nll_final_weight is None
+            else float(train_cfg.nll_final_weight)
+        )
+        effective_nll_weight = _linear_decay_weight(
+            epoch=epoch,
+            start_weight=float(train_cfg.nll_weight),
+            end_weight=float(nll_final_weight),
+            start_epoch=int(train_cfg.nll_decay_start_epoch),
+            end_epoch=int(train_cfg.nll_decay_end_epoch),
+        )
+        effective_cfg = StudentTrainConfig(
+            **{
+                **train_cfg.__dict__,
+                "nll_weight": float(effective_nll_weight),
+                "pairwise_weight": float(effective_pairwise_weight),
+                "top_loss_weight": float(effective_top_weight),
+            }
+        )
         train_stats = _run_epoch(
             model=model,
             loader=train_loader,
@@ -1007,23 +1126,29 @@ def train_student_from_distill_csv(
             "train_junction_mse": train_stats["junction_mse"],
             "train_corr_loss": train_stats["corr_loss"],
             "train_pairwise_loss": train_stats["pairwise_loss"],
+            "train_top_loss": train_stats["top_loss"],
             "val_loss": val_stats["loss"],
             "val_nll": val_stats["nll"],
             "val_global_mse": val_stats["global_mse"],
             "val_junction_mse": val_stats["junction_mse"],
             "val_corr_loss": val_stats["corr_loss"],
             "val_pairwise_loss": val_stats["pairwise_loss"],
+            "val_top_loss": val_stats["top_loss"],
+            "nll_weight_effective": float(effective_cfg.nll_weight),
             "pairwise_weight_effective": float(effective_cfg.pairwise_weight),
+            "top_loss_weight_effective": float(effective_cfg.top_loss_weight),
             **reg_metrics,
         }
         history_rows.append(row)
         logger.info(
-            "Epoch %d/%d train_loss=%.4f val_loss=%.4f global_corr=%.4f",
+            "Epoch %d/%d train_loss=%.4f val_loss=%.4f global_corr=%.4f global_corr_chimera=%.4f top5_overlap=%.4f",
             epoch,
             total_epochs,
             row["train_loss"],
             row["val_loss"],
             row["global_corr"] if math.isfinite(row["global_corr"]) else float("nan"),
+            row.get("global_corr_chimera", float("nan")),
+            row.get("topk_overlap_chimera_5pct", float("nan")),
         )
 
         last_ckpt = out_path / "student_last.pt"

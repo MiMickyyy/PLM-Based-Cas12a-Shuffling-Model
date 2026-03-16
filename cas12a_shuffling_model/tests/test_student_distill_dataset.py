@@ -10,9 +10,12 @@ from cas12a_shuffling_model.student.distill_dataset import (
 )
 from cas12a_shuffling_model.student.train_student import (
     StudentTrainConfig,
+    _linear_decay_weight,
+    _linear_ramp_progress,
     _masked_mse,
     _normalize_teacher_global_scores,
     _pairwise_ranking_loss,
+    _top_focus_ranking_loss,
     _weighted_masked_mse,
 )
 from cas12a_shuffling_model.student.vocab import build_default_vocab
@@ -227,3 +230,32 @@ def test_teacher_global_normalization_uses_source_and_length_bins():
     assert len(vals) == 4
     assert max(vals) - min(vals) < 10.0
     assert all(torch.isfinite(torch.tensor(vals)))
+
+
+def test_top_focus_loss_positive_when_top_scored_lower():
+    cfg = StudentTrainConfig(
+        top_loss_weight=1.0,
+        top_fraction=0.5,
+        top_pairs_per_batch=8,
+        top_margin=0.0,
+    )
+    teacher = torch.tensor([0.9, 0.8, 0.2, 0.1], dtype=torch.float32)
+    student = torch.tensor([0.1, 0.2, 0.8, 0.9], dtype=torch.float32)
+    source = torch.tensor([1.0, 1.0, 1.0, 1.0], dtype=torch.float32)
+    loss = _top_focus_ranking_loss(
+        student_global=student,
+        teacher_global=teacher,
+        source_is_chimera=source,
+        cfg=cfg,
+    )
+    assert float(loss.item()) > 0.0
+
+
+def test_ramp_and_decay_helpers():
+    assert _linear_ramp_progress(epoch=1, warmup_epochs=1, ramp_epochs=4) == 0.0
+    assert _linear_ramp_progress(epoch=2, warmup_epochs=1, ramp_epochs=4) == 0.25
+    assert _linear_ramp_progress(epoch=5, warmup_epochs=1, ramp_epochs=4) == 1.0
+    assert _linear_decay_weight(epoch=1, start_weight=0.2, end_weight=0.05, start_epoch=2, end_epoch=6) == 0.2
+    mid = _linear_decay_weight(epoch=4, start_weight=0.2, end_weight=0.05, start_epoch=2, end_epoch=6)
+    assert 0.05 < mid < 0.2
+    assert _linear_decay_weight(epoch=8, start_weight=0.2, end_weight=0.05, start_epoch=2, end_epoch=6) == 0.05

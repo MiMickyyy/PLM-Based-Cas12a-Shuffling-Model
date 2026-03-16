@@ -60,17 +60,30 @@ def _build_train_cfg(cfg: dict, device: str | None = None) -> StudentTrainConfig
         pairwise_min_teacher_diff=float(t.get("pairwise_min_teacher_diff", 0.01)),
         pairwise_ignore_close_diff=float(t.get("pairwise_ignore_close_diff", 0.0)),
         pairwise_hard_ratio=float(t.get("pairwise_hard_ratio", 0.5)),
-        pairwise_medium_ratio=float(t.get("pairwise_medium_ratio", 0.3)),
+        pairwise_medium_ratio=float(t.get("pairwise_medium_ratio", 0.5)),
         pairwise_easy_ratio=float(t.get("pairwise_easy_ratio", 0.2)),
         pairwise_length_bin_size=int(t.get("pairwise_length_bin_size", 64)),
+        pairwise_margin_alpha=float(t.get("pairwise_margin_alpha", 0.5)),
+        pairwise_margin_min=float(t.get("pairwise_margin_min", 0.0)),
+        pairwise_margin_max=float(t.get("pairwise_margin_max", 0.3)),
         pairwise_on_chimera_only=bool(t.get("pairwise_on_chimera_only", True)),
         pairwise_warmup_epochs=int(t.get("pairwise_warmup_epochs", 0)),
+        pairwise_ramp_epochs=int(t.get("pairwise_ramp_epochs", 0)),
         stage_a_natural_epochs=int(t.get("stage_a_natural_epochs", 0)),
         stage_a_batch_size=t.get("stage_a_batch_size"),
         stage_b_chimera_only=bool(t.get("stage_b_chimera_only", False)),
+        stage_b_lr_scale=float(t.get("stage_b_lr_scale", 1.0)),
         normalize_teacher_global=bool(t.get("normalize_teacher_global", False)),
         normalize_length_bin_size=int(t.get("normalize_length_bin_size", 64)),
         normalize_min_group_size=int(t.get("normalize_min_group_size", 32)),
+        nll_final_weight=t.get("nll_final_weight"),
+        nll_decay_start_epoch=int(t.get("nll_decay_start_epoch", 1)),
+        nll_decay_end_epoch=int(t.get("nll_decay_end_epoch", 1)),
+        top_loss_weight=float(t.get("top_loss_weight", 0.0)),
+        top_fraction=float(t.get("top_fraction", 0.1)),
+        top_margin=float(t.get("top_margin", 0.0)),
+        top_pairs_per_batch=int(t.get("top_pairs_per_batch", 64)),
+        top_on_chimera_only=bool(t.get("top_on_chimera_only", True)),
         topk_fracs=tuple(float(x) for x in t.get("topk_fracs", [0.01, 0.05, 0.10])),
         best_metric=str(t.get("best_metric", "val_loss")),
         best_metric_mode=str(t.get("best_metric_mode", "auto")),
@@ -114,10 +127,16 @@ def main() -> None:
     ap.add_argument("--pairwise-min-teacher-diff", type=float, default=None)
     ap.add_argument("--pairwise-ignore-close-diff", type=float, default=None)
     ap.add_argument("--pairwise-warmup-epochs", type=int, default=None)
+    ap.add_argument("--pairwise-ramp-epochs", type=int, default=None)
     ap.add_argument("--pairwise-on-all-sources", action="store_true")
     ap.add_argument("--stage-a-natural-epochs", type=int, default=None)
     ap.add_argument("--stage-b-chimera-only", action="store_true")
     ap.add_argument("--stage-b-use-all-sources", action="store_true")
+    ap.add_argument("--stage-b-lr-scale", type=float, default=None)
+    ap.add_argument("--nll-final-weight", type=float, default=None)
+    ap.add_argument("--nll-decay-start-epoch", type=int, default=None)
+    ap.add_argument("--nll-decay-end-epoch", type=int, default=None)
+    ap.add_argument("--top-loss-weight", type=float, default=None)
     ap.add_argument("--normalize-teacher-global", action="store_true")
     ap.add_argument("--normalize-length-bin-size", type=int, default=None)
     ap.add_argument("--best-metric", type=str, default=None)
@@ -215,6 +234,10 @@ def main() -> None:
         train_cfg = StudentTrainConfig(
             **{**train_cfg.__dict__, "pairwise_warmup_epochs": int(args.pairwise_warmup_epochs)}
         )
+    if args.pairwise_ramp_epochs is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "pairwise_ramp_epochs": int(args.pairwise_ramp_epochs)}
+        )
     if args.pairwise_on_all_sources:
         train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "pairwise_on_chimera_only": False})
     if args.stage_a_natural_epochs is not None:
@@ -228,6 +251,26 @@ def main() -> None:
     if args.stage_b_use_all_sources:
         train_cfg = StudentTrainConfig(
             **{**train_cfg.__dict__, "stage_b_chimera_only": False}
+        )
+    if args.stage_b_lr_scale is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "stage_b_lr_scale": float(args.stage_b_lr_scale)}
+        )
+    if args.nll_final_weight is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "nll_final_weight": float(args.nll_final_weight)}
+        )
+    if args.nll_decay_start_epoch is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "nll_decay_start_epoch": int(args.nll_decay_start_epoch)}
+        )
+    if args.nll_decay_end_epoch is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "nll_decay_end_epoch": int(args.nll_decay_end_epoch)}
+        )
+    if args.top_loss_weight is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "top_loss_weight": float(args.top_loss_weight)}
         )
     if args.normalize_teacher_global:
         train_cfg = StudentTrainConfig(
