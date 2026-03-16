@@ -52,6 +52,11 @@ def _build_train_cfg(cfg: dict, device: str | None = None) -> StudentTrainConfig
         chimera_global_weight=float(t.get("chimera_global_weight", 1.0)),
         natural_junction_weight=float(t.get("natural_junction_weight", 1.0)),
         chimera_junction_weight=float(t.get("chimera_junction_weight", 1.0)),
+        pairwise_weight=float(t.get("pairwise_weight", 0.0)),
+        pairwise_margin=float(t.get("pairwise_margin", 0.0)),
+        pairwise_pairs_per_batch=int(t.get("pairwise_pairs_per_batch", 64)),
+        pairwise_min_teacher_diff=float(t.get("pairwise_min_teacher_diff", 0.01)),
+        pairwise_on_chimera_only=bool(t.get("pairwise_on_chimera_only", True)),
         balance_source_types=bool(t.get("balance_source_types", False)),
         num_workers=int(t.get("num_workers", 0)),
         device=device,
@@ -84,6 +89,11 @@ def main() -> None:
     ap.add_argument("--chimera-global-weight", type=float, default=None)
     ap.add_argument("--natural-junction-weight", type=float, default=None)
     ap.add_argument("--chimera-junction-weight", type=float, default=None)
+    ap.add_argument("--pairwise-weight", type=float, default=None)
+    ap.add_argument("--pairwise-margin", type=float, default=None)
+    ap.add_argument("--pairwise-pairs-per-batch", type=int, default=None)
+    ap.add_argument("--pairwise-min-teacher-diff", type=float, default=None)
+    ap.add_argument("--pairwise-on-all-sources", action="store_true")
     ap.add_argument("--balance-source-types", action="store_true")
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
@@ -149,6 +159,20 @@ def main() -> None:
         train_cfg = StudentTrainConfig(
             **{**train_cfg.__dict__, "chimera_junction_weight": float(args.chimera_junction_weight)}
         )
+    if args.pairwise_weight is not None:
+        train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "pairwise_weight": float(args.pairwise_weight)})
+    if args.pairwise_margin is not None:
+        train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "pairwise_margin": float(args.pairwise_margin)})
+    if args.pairwise_pairs_per_batch is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "pairwise_pairs_per_batch": int(args.pairwise_pairs_per_batch)}
+        )
+    if args.pairwise_min_teacher_diff is not None:
+        train_cfg = StudentTrainConfig(
+            **{**train_cfg.__dict__, "pairwise_min_teacher_diff": float(args.pairwise_min_teacher_diff)}
+        )
+    if args.pairwise_on_all_sources:
+        train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "pairwise_on_chimera_only": False})
     if args.balance_source_types:
         train_cfg = StudentTrainConfig(**{**train_cfg.__dict__, "balance_source_types": True})
 

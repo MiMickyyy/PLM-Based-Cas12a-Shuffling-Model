@@ -14,6 +14,7 @@ import pandas as pd
 
 from cas12a_shuffling_model.calibration.calibrator import apply_calibration, load_calibration_artifact
 from cas12a_shuffling_model.io.loaders import load_yaml
+from cas12a_shuffling_model.search.combo_compact import build_sequence_from_combo, validate_combo_compact
 from cas12a_shuffling_model.search.rank_pipeline import greedy_diversity_select
 from cas12a_shuffling_model.search.sampler import combo_from_index, sample_combo_compacts
 from cas12a_shuffling_model.student.score_student import StudentScorer
@@ -167,6 +168,38 @@ def _select_rerank_candidates_union(
     return out.head(teacher_rerank_size).reset_index(drop=True)
 
 
+def _select_rerank_candidates_hybrid(
+    *,
+    shortlist_df: pd.DataFrame,
+    teacher_rerank_size: int,
+    exploit_ratio: float,
+    metrics: Sequence[str],
+) -> pd.DataFrame:
+    if len(shortlist_df) <= teacher_rerank_size:
+        return shortlist_df.copy().reset_index(drop=True)
+
+    ratio = float(exploit_ratio)
+    ratio = min(1.0, max(0.0, ratio))
+    exploit_n = int(round(teacher_rerank_size * ratio))
+    exploit_n = max(1, min(teacher_rerank_size, exploit_n))
+
+    top_exploit = shortlist_df.sort_values("student_rank_score", ascending=False).head(exploit_n).copy()
+    if len(top_exploit) >= teacher_rerank_size:
+        return top_exploit.head(teacher_rerank_size).reset_index(drop=True)
+
+    chosen = set(top_exploit["combo_compact"].astype(str).tolist())
+    remain = shortlist_df[~shortlist_df["combo_compact"].astype(str).isin(chosen)].copy()
+    explore_n = teacher_rerank_size - len(top_exploit)
+    explore = _select_rerank_candidates_union(
+        shortlist_df=remain,
+        teacher_rerank_size=explore_n,
+        metrics=metrics,
+    )
+    out = pd.concat([top_exploit, explore], ignore_index=True)
+    out = out.drop_duplicates(subset=["combo_compact"]).head(teacher_rerank_size)
+    return out.reset_index(drop=True)
+
+
 def _slot_lookup(validated_domains: dict[tuple[str, int], str]) -> tuple[list[dict[str, str]], list[dict[str, int]]]:
     letter_to_parent = {"A": "As", "L": "Lb", "F": "Fn", "M": "Mb2"}
     seq_lookup: list[dict[str, str]] = []
@@ -181,6 +214,81 @@ def _slot_lookup(validated_domains: dict[tuple[str, int], str]) -> tuple[list[di
         seq_lookup.append(seq_d)
         len_lookup.append(len_d)
     return seq_lookup, len_lookup
+
+
+def _resolve_active_probe_csv(cfg: dict, cli_path: str | None = None) -> str | None:
+    if cli_path:
+        return str(cli_path)
+    search_cfg = cfg.get("search", {})
+    configured = search_cfg.get("active_probe_csv")
+    if configured:
+        return str(configured)
+    out_active = cfg.get("paths", {}).get("out_active_dir")
+    if out_active:
+        p = Path(out_active)
+        if p.is_dir():
+            return str(p / "active_chimeras_reconstructed.csv")
+        return str(p)
+    return None
+
+
+def _load_active_probe_rows(
+    *,
+    active_csv: str,
+    validated_domains: dict[tuple[str, int], str],
+) -> pd.DataFrame:
+    if not active_csv or not Path(active_csv).exists():
+        return pd.DataFrame(columns=["combo_compact", "sequence_aa"])
+    df = pd.read_csv(active_csv)
+    if len(df) == 0:
+        return pd.DataFrame(columns=["combo_compact", "sequence_aa"])
+
+    combo_vals: list[str] = []
+    if "combo_compact" in df.columns:
+        for v in df["combo_compact"].astype(str).tolist():
+            vv = v.strip().upper()
+            if not vv or vv == "NAN":
+                continue
+            combo_vals.append(validate_combo_compact(vv))
+    else:
+        slot_names = [str(i) for i in range(1, 12)]
+        slot_cols = [c for c in df.columns if str(c).strip() in slot_names]
+        if len(slot_cols) < 11:
+            raise ValueError(
+                f"Active probe CSV missing combo_compact or 11 slot columns: {active_csv}"
+            )
+        slot_cols = sorted(slot_cols, key=lambda x: int(str(x).strip()))
+        for _, row in df.iterrows():
+            combo = "".join(str(row[c]).strip().upper() for c in slot_cols[:11])
+            combo_vals.append(validate_combo_compact(combo))
+
+    out = pd.DataFrame({"combo_compact": combo_vals})
+    if "sequence_aa" in df.columns:
+        seq_map: dict[str, str] = {}
+        for combo, seq in zip(
+            df.get("combo_compact", pd.Series([""] * len(df))).astype(str).tolist(),
+            df["sequence_aa"].astype(str).tolist(),
+        ):
+            combo_raw = combo.strip().upper()
+            if not combo_raw or combo_raw == "NAN":
+                continue
+            try:
+                combo_norm = validate_combo_compact(combo_raw)
+            except ValueError:
+                continue
+            seq_map[combo_norm] = seq.strip().upper()
+        out["sequence_aa"] = out["combo_compact"].map(seq_map).fillna("")
+    else:
+        out["sequence_aa"] = ""
+
+    out = out.drop_duplicates(subset=["combo_compact"]).reset_index(drop=True)
+    out["sequence_aa"] = out.apply(
+        lambda r: r["sequence_aa"]
+        if str(r["sequence_aa"]).strip()
+        else build_sequence_from_combo(str(r["combo_compact"]), validated_domains),
+        axis=1,
+    )
+    return out
 
 
 def _seq_and_lengths_from_combo(
@@ -510,7 +618,10 @@ def main() -> None:
     ap.add_argument("--checkpoint-every-batches", type=int, default=None)
     ap.add_argument("--shortlist-strategy", choices=["weighted", "union"], default=None)
     ap.add_argument("--union-per-metric-size", type=int, default=None)
-    ap.add_argument("--rerank-selection", choices=["weighted", "union"], default=None)
+    ap.add_argument("--rerank-selection", choices=["weighted", "union", "hybrid"], default=None)
+    ap.add_argument("--rerank-exploit-ratio", type=float, default=None)
+    ap.add_argument("--active-probe-csv", default=None)
+    ap.add_argument("--disable-active-probe", action="store_true")
     ap.add_argument("--device", default=None, help="student device; teacher auto-detect")
     ap.add_argument("--teacher-device", default=None)
     ap.add_argument("--teacher-model-name-or-path", default=None)
@@ -576,6 +687,15 @@ def main() -> None:
     rerank_selection = str(
         args.rerank_selection if args.rerank_selection is not None else search_cfg.get("rerank_selection", shortlist_strategy)
     ).strip().lower()
+    rerank_exploit_ratio = (
+        float(args.rerank_exploit_ratio)
+        if args.rerank_exploit_ratio is not None
+        else float(search_cfg.get("rerank_exploit_ratio", 0.7))
+    )
+    active_probe_enabled = (
+        not bool(args.disable_active_probe)
+        and bool(search_cfg.get("active_probe", True))
+    )
     weights = search_cfg.get("student_rank_weights", {})
     w_global = float(weights.get("global", 1.0))
     w_jmean = float(weights.get("junction_mean", 0.5))
@@ -646,13 +766,22 @@ def main() -> None:
             w_jmin=w_jmin,
         )
 
+    rerank_df: pd.DataFrame
     if args.resume and teacher_reranked_csv.exists():
         teacher_df = pd.read_csv(teacher_reranked_csv)
+        rerank_df = teacher_df.copy()
     else:
         if rerank_selection == "union":
             rerank_df = _select_rerank_candidates_union(
                 shortlist_df=shortlist_df,
                 teacher_rerank_size=teacher_rerank_size,
+                metrics=UNION_METRICS_DEFAULT,
+            )
+        elif rerank_selection == "hybrid":
+            rerank_df = _select_rerank_candidates_hybrid(
+                shortlist_df=shortlist_df,
+                teacher_rerank_size=teacher_rerank_size,
+                exploit_ratio=rerank_exploit_ratio,
                 metrics=UNION_METRICS_DEFAULT,
             )
         else:
@@ -685,6 +814,140 @@ def main() -> None:
 
     selected_keys = set(selected["combo_compact"].astype(str).tolist())
     cal_df["diversity_selected"] = cal_df["combo_compact"].astype(str).isin(selected_keys)
+
+    probe_summary: dict[str, Any] | None = None
+    if active_probe_enabled:
+        active_probe_csv = _resolve_active_probe_csv(cfg, cli_path=args.active_probe_csv)
+        if active_probe_csv and Path(active_probe_csv).exists():
+            try:
+                probe_rows = _load_active_probe_rows(
+                    active_csv=active_probe_csv,
+                    validated_domains=validated_domains,
+                )
+            except Exception as e:
+                logger.warning("Failed to load active probe rows: %s", e)
+                probe_rows = pd.DataFrame(columns=["combo_compact", "sequence_aa"])
+        else:
+            logger.warning("Active probe CSV not found; skip active probe diagnostics. path=%s", active_probe_csv)
+            probe_rows = pd.DataFrame(columns=["combo_compact", "sequence_aa"])
+
+        if len(probe_rows) > 0:
+            shortlist_lookup = shortlist_df.set_index("combo_compact")
+            probe_student_rows: list[dict[str, Any]] = []
+            missing_rows: list[dict[str, Any]] = []
+            for _, row in probe_rows.iterrows():
+                combo = str(row["combo_compact"])
+                seq = str(row.get("sequence_aa", "")).strip().upper()
+                if combo in shortlist_lookup.index:
+                    src = shortlist_lookup.loc[combo]
+                    if isinstance(src, pd.DataFrame):
+                        src = src.iloc[0]
+                    rec = {
+                        "combo_compact": combo,
+                        "sequence_aa": seq or str(src.get("sequence_aa", "")),
+                        "sequence_hash": src.get("sequence_hash", ""),
+                        "global_score": src.get("global_score", float("nan")),
+                        "junction_mean": src.get("junction_mean", float("nan")),
+                        "junction_min": src.get("junction_min", float("nan")),
+                        "student_rank_score": src.get("student_rank_score", float("nan")),
+                        "in_student_shortlist": True,
+                    }
+                    probe_student_rows.append(rec)
+                else:
+                    missing_rows.append({"combo_compact": combo, "sequence_aa": seq})
+
+            if missing_rows:
+                missing_df = pd.DataFrame(missing_rows)
+                scored_missing = student_scorer.score_batch_rows(
+                    rows_df=missing_df,
+                    validated_domains=validated_domains,
+                    combo_col="combo_compact",
+                    seq_col="sequence_aa",
+                    batch_size=student_batch_size,
+                )
+                scored_missing["student_rank_score"] = scored_missing.apply(
+                    lambda r: _student_rank_score(
+                        r.to_dict(), w_global=w_global, w_jmean=w_jmean, w_jmin=w_jmin
+                    ),
+                    axis=1,
+                )
+                for _, r in scored_missing.iterrows():
+                    probe_student_rows.append(
+                        {
+                            "combo_compact": str(r["combo_compact"]),
+                            "sequence_aa": str(r.get("sequence_aa", "")),
+                            "sequence_hash": str(r.get("sequence_hash", "")),
+                            "global_score": float(r.get("global_score", float("nan"))),
+                            "junction_mean": float(r.get("junction_mean", float("nan"))),
+                            "junction_min": float(r.get("junction_min", float("nan"))),
+                            "student_rank_score": float(r.get("student_rank_score", float("nan"))),
+                            "in_student_shortlist": False,
+                        }
+                    )
+
+            probe_student_df = pd.DataFrame(probe_student_rows)
+            shortlist_rank_map = {
+                str(c): i + 1 for i, c in enumerate(shortlist_df["combo_compact"].astype(str).tolist())
+            }
+            rerank_combo_set = set(teacher_df["combo_compact"].astype(str).tolist())
+            probe_student_df["student_shortlist_rank"] = probe_student_df["combo_compact"].map(shortlist_rank_map)
+            probe_student_df["in_teacher_rerank"] = probe_student_df["combo_compact"].astype(str).isin(rerank_combo_set)
+            probe_student_df["in_final_top"] = probe_student_df["combo_compact"].astype(str).isin(selected_keys)
+            probe_student_df.to_csv(run_dir / "active_probe_student_rank.csv", index=False)
+
+            probe_teacher_df = score_rows_with_teacher(
+                rows_df=probe_student_df[["combo_compact", "sequence_aa"]],
+                scorer=teacher_scorer,
+                validated_domains=validated_domains,
+                combo_col="combo_compact",
+                seq_col="sequence_aa",
+                batch_size=teacher_batch_size,
+            )
+            probe_teacher_df = probe_teacher_df.merge(
+                probe_student_df[
+                    [
+                        "combo_compact",
+                        "student_rank_score",
+                        "student_shortlist_rank",
+                        "in_student_shortlist",
+                        "in_teacher_rerank",
+                        "in_final_top",
+                    ]
+                ],
+                on="combo_compact",
+                how="left",
+            )
+            probe_teacher_df.to_csv(run_dir / "active_probe_teacher_score.csv", index=False)
+
+            probe_cal_df = apply_calibration(probe_teacher_df, cal_artifact)
+            rerank_global_rank = {
+                str(c): i + 1
+                for i, c in enumerate(
+                    teacher_df.sort_values("global_score", ascending=False)["combo_compact"].astype(str).tolist()
+                )
+            }
+            rerank_cal_rank = {
+                str(c): i + 1
+                for i, c in enumerate(
+                    cal_df.sort_values("calibrated_prob", ascending=False)["combo_compact"].astype(str).tolist()
+                )
+            }
+            probe_cal_df["teacher_global_rank_in_rerank"] = probe_cal_df["combo_compact"].astype(str).map(rerank_global_rank)
+            probe_cal_df["teacher_cal_rank_in_rerank"] = probe_cal_df["combo_compact"].astype(str).map(rerank_cal_rank)
+            probe_cal_df.to_csv(run_dir / "active_probe_calibrated.csv", index=False)
+
+            probe_summary = {
+                "active_probe_csv": str(active_probe_csv),
+                "n_probe": int(len(probe_cal_df)),
+                "n_in_student_shortlist": int(probe_cal_df["in_student_shortlist"].astype(bool).sum()),
+                "n_in_teacher_rerank": int(probe_cal_df["in_teacher_rerank"].astype(bool).sum()),
+                "n_in_final_top": int(probe_cal_df["in_final_top"].astype(bool).sum()),
+                "mean_calibrated_prob": float(probe_cal_df["calibrated_prob"].mean()),
+                "median_calibrated_prob": float(probe_cal_df["calibrated_prob"].median()),
+            }
+            (run_dir / "active_probe_summary.json").write_text(
+                json.dumps(probe_summary, indent=2), encoding="utf-8"
+            )
 
     ordered_cols = [
         "final_rank",
@@ -729,6 +992,7 @@ def main() -> None:
         "shortlist_strategy": shortlist_strategy,
         "union_per_metric_size": union_per_metric_size if shortlist_strategy == "union" else None,
         "rerank_selection": rerank_selection,
+        "rerank_exploit_ratio": rerank_exploit_ratio if rerank_selection == "hybrid" else None,
         "student_rank_weights": {
             "global": w_global,
             "junction_mean": w_jmean,
@@ -750,6 +1014,7 @@ def main() -> None:
             "candidate_top": str(candidate_top_csv),
             "candidate_all_scored": str(candidate_all_csv),
         },
+        "active_probe": probe_summary,
     }
     (run_dir / "run_meta.json").write_text(json.dumps(run_meta, indent=2), encoding="utf-8")
     logger.info("Ranking completed. run_dir=%s", run_dir)

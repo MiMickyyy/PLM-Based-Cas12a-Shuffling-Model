@@ -7,7 +7,12 @@ from cas12a_shuffling_model.student.distill_dataset import (
     load_distill_records_from_csv,
     split_indices,
 )
-from cas12a_shuffling_model.student.train_student import _masked_mse, _weighted_masked_mse
+from cas12a_shuffling_model.student.train_student import (
+    StudentTrainConfig,
+    _masked_mse,
+    _pairwise_ranking_loss,
+    _weighted_masked_mse,
+)
 from cas12a_shuffling_model.student.vocab import build_default_vocab
 
 
@@ -134,4 +139,38 @@ def test_weighted_masked_mse_respects_sample_weights():
     target = torch.tensor([0.0, 3.0], dtype=torch.float32)
     w = torch.tensor([0.0, 1.0], dtype=torch.float32)
     loss = _weighted_masked_mse(pred, target, sample_weights=w)
+    assert float(loss.item()) == 0.0
+
+
+def test_pairwise_ranking_loss_positive_when_order_wrong():
+    cfg = StudentTrainConfig(
+        pairwise_weight=1.0,
+        pairwise_margin=0.1,
+        pairwise_pairs_per_batch=8,
+        pairwise_min_teacher_diff=0.01,
+        pairwise_on_chimera_only=True,
+    )
+    student = torch.tensor([0.2, 0.3, 0.4, 0.5], dtype=torch.float32)
+    teacher = torch.tensor([0.9, 0.8, 0.2, 0.1], dtype=torch.float32)
+    source = torch.tensor([1.0, 1.0, 1.0, 1.0], dtype=torch.float32)
+    loss = _pairwise_ranking_loss(
+        student_global=student,
+        teacher_global=teacher,
+        source_is_chimera=source,
+        cfg=cfg,
+    )
+    assert float(loss.item()) > 0.0
+
+
+def test_pairwise_ranking_loss_zero_when_disabled():
+    cfg = StudentTrainConfig(pairwise_weight=0.0)
+    student = torch.tensor([0.2, 0.3], dtype=torch.float32)
+    teacher = torch.tensor([0.9, 0.1], dtype=torch.float32)
+    source = torch.tensor([1.0, 1.0], dtype=torch.float32)
+    loss = _pairwise_ranking_loss(
+        student_global=student,
+        teacher_global=teacher,
+        source_is_chimera=source,
+        cfg=cfg,
+    )
     assert float(loss.item()) == 0.0

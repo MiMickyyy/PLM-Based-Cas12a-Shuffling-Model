@@ -115,6 +115,9 @@ search:
   shortlist_strategy: weighted
   union_per_metric_size: 10000
   rerank_selection: weighted
+  rerank_exploit_ratio: 0.70
+  active_probe: true
+  active_probe_csv: null
   student_rank_weights:
     global: 1.0
     junction_mean: 0.5
@@ -151,6 +154,11 @@ student:
     chimera_global_weight: 1.0
     natural_junction_weight: 1.0
     chimera_junction_weight: 1.0
+    pairwise_weight: 0.0
+    pairwise_margin: 0.05
+    pairwise_pairs_per_batch: 64
+    pairwise_min_teacher_diff: 0.01
+    pairwise_on_chimera_only: true
     balance_source_types: false
     num_workers: 4
     cpu_threads: 10

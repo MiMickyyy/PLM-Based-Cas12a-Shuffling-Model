@@ -63,6 +63,11 @@ class StudentTrainConfig:
     chimera_global_weight: float = 1.0
     natural_junction_weight: float = 1.0
     chimera_junction_weight: float = 1.0
+    pairwise_weight: float = 0.0
+    pairwise_margin: float = 0.0
+    pairwise_pairs_per_batch: int = 64
+    pairwise_min_teacher_diff: float = 0.01
+    pairwise_on_chimera_only: bool = True
     balance_source_types: bool = False
     num_workers: int = 0
     device: str | None = None
@@ -196,6 +201,60 @@ def _weighted_masked_mse(
     return (diff[mask] * wv).sum() / denom
 
 
+def _pairwise_ranking_loss(
+    *,
+    student_global: torch.Tensor,
+    teacher_global: torch.Tensor,
+    source_is_chimera: torch.Tensor,
+    cfg: StudentTrainConfig,
+) -> torch.Tensor:
+    if float(cfg.pairwise_weight) <= 0.0:
+        return torch.tensor(0.0, device=student_global.device)
+
+    mask = torch.isfinite(student_global) & torch.isfinite(teacher_global)
+    if bool(cfg.pairwise_on_chimera_only):
+        mask = mask & (source_is_chimera > 0.5)
+
+    valid_idx = torch.nonzero(mask, as_tuple=False).squeeze(-1)
+    if valid_idx.numel() < 2:
+        return torch.tensor(0.0, device=student_global.device)
+
+    t = teacher_global[valid_idx]
+    s = student_global[valid_idx]
+
+    order = torch.argsort(t, descending=True)
+    sorted_t = t[order]
+    sorted_s = s[order]
+    n = int(sorted_t.shape[0])
+    n_half = n // 2
+    if n_half < 1:
+        return torch.tensor(0.0, device=student_global.device)
+
+    high_t = sorted_t[:n_half]
+    low_t = sorted_t[-n_half:]
+    high_s = sorted_s[:n_half]
+    low_s = sorted_s[-n_half:]
+
+    teacher_diff = high_t - low_t
+    valid_pair_mask = teacher_diff >= float(cfg.pairwise_min_teacher_diff)
+    if valid_pair_mask.sum() == 0:
+        return torch.tensor(0.0, device=student_global.device)
+
+    high_s = high_s[valid_pair_mask]
+    low_s = low_s[valid_pair_mask]
+    if high_s.numel() == 0:
+        return torch.tensor(0.0, device=student_global.device)
+
+    max_pairs = int(cfg.pairwise_pairs_per_batch)
+    if max_pairs > 0 and high_s.numel() > max_pairs:
+        sel = torch.randperm(high_s.numel(), device=high_s.device)[:max_pairs]
+        high_s = high_s[sel]
+        low_s = low_s[sel]
+
+    margin = float(cfg.pairwise_margin)
+    return F.relu(margin - (high_s - low_s)).mean()
+
+
 def _student_scores_from_token_ll(
     *,
     token_ll: torch.Tensor,  # [B, L]
@@ -252,7 +311,14 @@ def _run_epoch(
 ) -> dict[str, float]:
     is_train = optimizer is not None
     model.train(is_train)
-    stats = {"loss": 0.0, "nll": 0.0, "global_mse": 0.0, "junction_mse": 0.0, "batches": 0}
+    stats = {
+        "loss": 0.0,
+        "nll": 0.0,
+        "global_mse": 0.0,
+        "junction_mse": 0.0,
+        "pairwise_loss": 0.0,
+        "batches": 0,
+    }
 
     for batch in loader:
         input_ids = batch["input_ids"].to(device)
@@ -291,11 +357,18 @@ def _run_epoch(
             junction_mse = _weighted_masked_mse(
                 student_junctions, teacher_junctions, junction_weights
             )
+            pairwise_loss = _pairwise_ranking_loss(
+                student_global=student_global,
+                teacher_global=teacher_global,
+                source_is_chimera=source_is_chimera,
+                cfg=train_cfg,
+            )
 
             loss = (
                 train_cfg.nll_weight * nll
                 + train_cfg.global_weight * global_mse
                 + train_cfg.junction_weight * junction_mse
+                + train_cfg.pairwise_weight * pairwise_loss
             )
 
             if is_train:
@@ -308,10 +381,11 @@ def _run_epoch(
         stats["nll"] += float(nll.item())
         stats["global_mse"] += float(global_mse.item())
         stats["junction_mse"] += float(junction_mse.item())
+        stats["pairwise_loss"] += float(pairwise_loss.item())
         stats["batches"] += 1
 
     if stats["batches"] > 0:
-        for k in ("loss", "nll", "global_mse", "junction_mse"):
+        for k in ("loss", "nll", "global_mse", "junction_mse", "pairwise_loss"):
             stats[k] /= stats["batches"]
     return stats
 
@@ -522,10 +596,12 @@ def train_student_from_distill_csv(
             "train_nll": train_stats["nll"],
             "train_global_mse": train_stats["global_mse"],
             "train_junction_mse": train_stats["junction_mse"],
+            "train_pairwise_loss": train_stats["pairwise_loss"],
             "val_loss": val_stats["loss"],
             "val_nll": val_stats["nll"],
             "val_global_mse": val_stats["global_mse"],
             "val_junction_mse": val_stats["junction_mse"],
+            "val_pairwise_loss": val_stats["pairwise_loss"],
             **reg_metrics,
         }
         history_rows.append(row)
