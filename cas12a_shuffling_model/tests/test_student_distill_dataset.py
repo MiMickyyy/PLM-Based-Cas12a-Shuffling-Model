@@ -2,6 +2,7 @@ import pandas as pd
 import torch
 
 from cas12a_shuffling_model.student.distill_dataset import (
+    DistillRecord,
     DistillDataset,
     collate_distill_batch,
     load_distill_records_from_csv,
@@ -10,6 +11,7 @@ from cas12a_shuffling_model.student.distill_dataset import (
 from cas12a_shuffling_model.student.train_student import (
     StudentTrainConfig,
     _masked_mse,
+    _normalize_teacher_global_scores,
     _pairwise_ranking_loss,
     _weighted_masked_mse,
 )
@@ -174,3 +176,54 @@ def test_pairwise_ranking_loss_zero_when_disabled():
         cfg=cfg,
     )
     assert float(loss.item()) == 0.0
+
+
+def test_teacher_global_normalization_uses_source_and_length_bins():
+    records = [
+        DistillRecord(
+            combo_compact="AAAAAAAAAAA",
+            source_type="chimera",
+            sequence_aa="A" * 100,
+            sequence_hash="h1",
+            domain_lengths=[10] * 10 + [0],
+            teacher_global=-1.0,
+            teacher_junctions=[float("nan")] * 10,
+        ),
+        DistillRecord(
+            combo_compact="LLLLLLLLLLL",
+            source_type="chimera",
+            sequence_aa="A" * 104,
+            sequence_hash="h2",
+            domain_lengths=[10] * 10 + [4],
+            teacher_global=-0.8,
+            teacher_junctions=[float("nan")] * 10,
+        ),
+        DistillRecord(
+            combo_compact="",
+            source_type="natural",
+            sequence_aa="A" * 700,
+            sequence_hash="h3",
+            domain_lengths=[63] * 10 + [70],
+            teacher_global=-3.0,
+            teacher_junctions=[float("nan")] * 10,
+        ),
+        DistillRecord(
+            combo_compact="",
+            source_type="natural",
+            sequence_aa="A" * 740,
+            sequence_hash="h4",
+            domain_lengths=[67] * 10 + [70],
+            teacher_global=-2.9,
+            teacher_junctions=[float("nan")] * 10,
+        ),
+    ]
+    cfg = StudentTrainConfig(
+        normalize_teacher_global=True,
+        normalize_length_bin_size=64,
+        normalize_min_group_size=2,
+    )
+    out = _normalize_teacher_global_scores(records, cfg)
+    vals = [r.teacher_global for r in out]
+    assert len(vals) == 4
+    assert max(vals) - min(vals) < 10.0
+    assert all(torch.isfinite(torch.tensor(vals)))

@@ -142,23 +142,40 @@ student:
     max_positions: 2048
   train:
     batch_size: 2
-    epochs: 1
+    epochs: 3
     lr: 0.001
     weight_decay: 0.0001
     grad_clip: 1.0
     val_fraction: 0.34
-    nll_weight: 1.0
-    global_weight: 1.0
-    junction_weight: 1.0
+    nll_weight: 0.1
+    global_weight: 0.2
+    junction_weight: 0.2
     natural_global_weight: 1.0
     chimera_global_weight: 1.0
     natural_junction_weight: 1.0
     chimera_junction_weight: 1.0
-    pairwise_weight: 0.0
-    pairwise_margin: 0.05
-    pairwise_pairs_per_batch: 16
+    correlation_weight: 0.2
+    correlation_on_chimera_only: true
+    pairwise_weight: 0.6
+    pairwise_margin: 0.02
+    pairwise_pairs_per_batch: 32
     pairwise_min_teacher_diff: 0.01
+    pairwise_ignore_close_diff: 0.01
+    pairwise_hard_ratio: 0.5
+    pairwise_medium_ratio: 0.3
+    pairwise_easy_ratio: 0.2
+    pairwise_length_bin_size: 64
     pairwise_on_chimera_only: true
+    pairwise_warmup_epochs: 1
+    stage_a_natural_epochs: 1
+    stage_a_batch_size: 2
+    stage_b_chimera_only: true
+    normalize_teacher_global: true
+    normalize_length_bin_size: 64
+    normalize_min_group_size: 4
+    topk_fracs: [0.10]
+    best_metric: global_corr_chimera
+    best_metric_mode: max
     balance_source_types: false
     num_workers: 2
     cpu_threads: 10

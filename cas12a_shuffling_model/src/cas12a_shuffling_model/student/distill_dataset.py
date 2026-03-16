@@ -121,7 +121,7 @@ def load_distill_records_from_csv(
     csv_path: str,
     validated_domains: dict[tuple[str, int], str] | None = None,
 ) -> list[DistillRecord]:
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, low_memory=False, dtype={"combo_compact": "string"})
     if len(df) == 0:
         raise ValueError("Distillation CSV is empty")
 
