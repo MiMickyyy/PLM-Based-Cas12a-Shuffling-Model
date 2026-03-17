@@ -83,7 +83,7 @@ def _prepare_slots_and_extra(
     feature_std: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     canonical = canonicalize_chimera_table(df, require_sequence=False)
-    slots = canonical[slot_columns()].to_numpy(dtype=np.int64)
+    slots = canonical[slot_columns()].to_numpy(dtype=np.int64, copy=True)
     if len(feature_cols) == 0:
         extra = np.zeros((len(canonical), 0), dtype=np.float32)
         return slots, extra
@@ -100,7 +100,7 @@ class AssistantRankerScorer:
     def __init__(self, checkpoint_path: str, *, device: str | None = None):
         self.checkpoint_path = checkpoint_path
         self.device = detect_torch_device(device)
-        ckpt = torch.load(checkpoint_path, map_location="cpu")
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         mc = AssistantModelConfig(**dict(ckpt["model_config"]))
         self.feature_cols = list(ckpt.get("feature_cols", []))
         self.feature_mean = np.asarray(ckpt.get("feature_mean", []), dtype=np.float32)

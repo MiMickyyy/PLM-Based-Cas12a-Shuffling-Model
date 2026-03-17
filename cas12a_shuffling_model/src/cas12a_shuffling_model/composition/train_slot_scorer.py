@@ -17,6 +17,7 @@ from cas12a_shuffling_model.composition.chimera_repr import canonicalize_chimera
 from cas12a_shuffling_model.composition.ranking_losses import (
     correlation_loss,
     filtered_pairwise_rank_loss,
+    hard_negative_rank_loss,
     is_better_metric,
     ranking_metrics,
     top_focus_loss,
@@ -56,6 +57,10 @@ class SlotScorerTrainConfig:
     top_fraction: float = 0.10
     top_pairs_per_batch: int = 512
     top_margin: float = 0.0
+    hard_neg_weight: float = 0.3
+    hard_neg_top_fraction: float = 0.10
+    hard_neg_pairs_per_batch: int = 512
+    hard_neg_margin: float = 0.05
     oversample_top_fraction: float = 0.10
     oversample_weight: float = 2.0
     target_col: str = "assistant_score"
@@ -117,7 +122,7 @@ def _run_epoch(
 ) -> dict[str, float]:
     is_train = optimizer is not None
     model.train(is_train)
-    stats = {"loss": 0.0, "top": 0.0, "corr": 0.0, "pair": 0.0, "batches": 0}
+    stats = {"loss": 0.0, "top": 0.0, "corr": 0.0, "pair": 0.0, "hard_neg": 0.0, "batches": 0}
     for batch in loader:
         slots = batch["slots"].to(device)
         target = batch["target"].to(device)
@@ -145,7 +150,19 @@ def _run_epoch(
                 margin_min=cfg.pair_margin_min,
                 margin_max=cfg.pair_margin_max,
             )
-            loss = cfg.top_weight * l_top + cfg.corr_weight * l_corr + cfg.pair_weight * l_pair
+            l_hard_neg = hard_negative_rank_loss(
+                pred=pred,
+                target=target,
+                top_fraction=cfg.hard_neg_top_fraction,
+                pairs_per_batch=cfg.hard_neg_pairs_per_batch,
+                margin=cfg.hard_neg_margin,
+            )
+            loss = (
+                cfg.top_weight * l_top
+                + cfg.corr_weight * l_corr
+                + cfg.pair_weight * l_pair
+                + cfg.hard_neg_weight * l_hard_neg
+            )
             if is_train:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -155,9 +172,10 @@ def _run_epoch(
         stats["top"] += float(l_top.item())
         stats["corr"] += float(l_corr.item())
         stats["pair"] += float(l_pair.item())
+        stats["hard_neg"] += float(l_hard_neg.item())
         stats["batches"] += 1
     if stats["batches"] > 0:
-        for k in ("loss", "top", "corr", "pair"):
+        for k in ("loss", "top", "corr", "pair", "hard_neg"):
             stats[k] /= stats["batches"]
     return stats
 
@@ -261,10 +279,12 @@ def train_slot_scorer(
             "train_top_loss": tr["top"],
             "train_corr_loss": tr["corr"],
             "train_pair_loss": tr["pair"],
+            "train_hard_neg_loss": tr["hard_neg"],
             "val_loss": va["loss"],
             "val_top_loss": va["top"],
             "val_corr_loss": va["corr"],
             "val_pair_loss": va["pair"],
+            "val_hard_neg_loss": va["hard_neg"],
             **metrics,
         }
         history_rows.append(row)

@@ -165,6 +165,38 @@ def top_focus_loss(
     return F.softplus(-margin_term).mean()
 
 
+def hard_negative_rank_loss(
+    *,
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    top_fraction: float,
+    pairs_per_batch: int,
+    margin: float,
+) -> torch.Tensor:
+    mask = torch.isfinite(pred) & torch.isfinite(target)
+    idx = torch.nonzero(mask, as_tuple=False).squeeze(-1)
+    if idx.numel() < 4:
+        return torch.tensor(0.0, device=pred.device)
+
+    p = pred[idx]
+    t = target[idx]
+    n = int(t.shape[0])
+    k = max(1, min(n - 1, int(round(n * float(top_fraction)))))
+
+    order_t = torch.argsort(t, descending=True)
+    top_idx = order_t[:k]
+    rest_idx = order_t[k:]
+    if rest_idx.numel() == 0:
+        return torch.tensor(0.0, device=pred.device)
+
+    m = max(1, min(int(pairs_per_batch), int(top_idx.numel()), int(rest_idx.numel())))
+    hard_false_pos = rest_idx[torch.argsort(p[rest_idx], descending=True)[:m]]
+    hard_false_neg = top_idx[torch.argsort(p[top_idx], descending=False)[:m]]
+
+    margin_term = (p[hard_false_neg] - p[hard_false_pos]) - float(margin)
+    return F.softplus(-margin_term).mean()
+
+
 def _pearson_np(true: np.ndarray, pred: np.ndarray) -> float:
     mask = np.isfinite(true) & np.isfinite(pred)
     if mask.sum() < 2:
@@ -280,4 +312,3 @@ def is_better_metric(
         if _val(new_metrics, key) < _val(best_metrics, key):
             return False
     return False
-

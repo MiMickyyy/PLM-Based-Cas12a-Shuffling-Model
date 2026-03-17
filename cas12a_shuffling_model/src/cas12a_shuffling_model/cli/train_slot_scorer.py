@@ -74,6 +74,10 @@ def main() -> None:
         top_fraction=float(t.get("top_fraction", 0.10)),
         top_pairs_per_batch=int(t.get("top_pairs_per_batch", 512)),
         top_margin=float(t.get("top_margin", 0.0)),
+        hard_neg_weight=float(t.get("hard_neg_weight", 0.3)),
+        hard_neg_top_fraction=float(t.get("hard_neg_top_fraction", 0.10)),
+        hard_neg_pairs_per_batch=int(t.get("hard_neg_pairs_per_batch", 512)),
+        hard_neg_margin=float(t.get("hard_neg_margin", 0.05)),
         oversample_top_fraction=float(t.get("oversample_top_fraction", 0.10)),
         oversample_weight=float(t.get("oversample_weight", 2.0)),
         target_col=str(args.target_col or t.get("target_col", "assistant_score")),
@@ -102,4 +106,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -12,7 +12,18 @@ def read_table(path: str | Path) -> pd.DataFrame:
     p = Path(path)
     ext = p.suffix.lower()
     if ext == ".parquet":
-        return pd.read_parquet(p)
+        try:
+            return pd.read_parquet(p)
+        except Exception as e:
+            fallback = p.with_suffix(".csv")
+            if fallback.exists():
+                logger.warning(
+                    "Failed to read parquet (%s), fallback to csv: %s",
+                    e,
+                    fallback,
+                )
+                return pd.read_csv(fallback)
+            raise
     if ext in {".csv", ".txt"}:
         return pd.read_csv(p)
     if ext in {".tsv"}:
@@ -46,4 +57,3 @@ def write_table(df: pd.DataFrame, path: str | Path) -> str:
         df.to_csv(p, sep="\t", index=False)
         return str(p)
     raise ValueError(f"Unsupported table format for write: {p}")
-

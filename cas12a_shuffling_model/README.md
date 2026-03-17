@@ -219,6 +219,10 @@ PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model
   --assistant-checkpoint /path/to/assistant_best.pt
 ```
 
+When `slot_search.rerank.teacher_audit=true`, rerank also performs an offline teacher audit on top candidates and exports:
+- `assistant_teacher_audit_top.csv`
+- `assistant_teacher_audit_summary.json`
+
 ### Notes / assumptions
 - Final production search model is `S_scan` (slot-level), not a sequence autoregressive student.
 - `T_family` is used offline for labeling sampled chimera data only.

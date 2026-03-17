@@ -105,7 +105,7 @@ def detect_torch_device(preferred: str | None = None) -> str:
 class SlotScorerPredictor:
     def __init__(self, checkpoint_path: str, *, device: str | None = None):
         self.device = detect_torch_device(device)
-        ckpt = torch.load(checkpoint_path, map_location="cpu")
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         cfg = SlotScorerConfig(**dict(ckpt["model_config"]))
         self.model = TinySlotScorer(cfg=cfg)
         self.model.load_state_dict(ckpt["model_state_dict"])
@@ -163,4 +163,3 @@ def save_slot_scorer_checkpoint(payload: dict[str, Any], path: str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, p)
-

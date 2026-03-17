@@ -36,5 +36,6 @@ Implementation: `src/cas12a_shuffling_model/composition/chimera_repr.py`
 ## Notes
 
 - The final production scanner is `S_scan` (slot-level), not a tiny sequence LM.
-- Ranking-focused losses are used (`top + corr + filtered pairwise`), with near-tie filtering and easy/medium/hard pair mixing.
+- Ranking-focused losses are used (`top + corr + filtered pairwise + hard-negative top-tail`), with near-tie filtering and easy/medium/hard pair mixing.
 - Best checkpoint selection is ranking-based (`global_corr_chimera` by default), not plain loss.
+- Rerank stage supports optional teacher audit exports for top candidates.

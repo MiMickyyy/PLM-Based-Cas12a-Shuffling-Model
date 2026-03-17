@@ -110,7 +110,11 @@ slot_search:
       top_fraction: 0.10
       top_pairs_per_batch: 512
       top_margin: 0.0
-      oversample_top_fraction: 0.10
+      hard_neg_weight: 0.3
+      hard_neg_top_fraction: 0.10
+      hard_neg_pairs_per_batch: 512
+      hard_neg_margin: 0.05
+      oversample_top_fraction: 0.20
       oversample_weight: 2.0
       best_metric: global_corr_chimera
       num_workers: 4
@@ -120,7 +124,7 @@ slot_search:
   scan:
     output_dir: cas12a_shuffling_model/outputs/slot_search/full_scan
     batch_size: 65536
-    shortlist_size: 20000
+    shortlist_size: 100000
     top_k: 50
     save_all_scores: false
     progress_every_batches: 4
@@ -132,4 +136,6 @@ slot_search:
     batch_size: 2048
     top_k: 50
     include_sequence: false
-
+    teacher_audit: true
+    teacher_audit_top_k: 200
+    teacher_audit_batch_size: 8
