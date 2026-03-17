@@ -147,3 +147,80 @@ PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model
   --ranking-csv-2 /path/to/candidate_top_second_run.csv \
   --out-dir /path/to/figures
 ```
+
+## New 3-stage search pipeline (T_family -> A_rank -> S_scan)
+
+This repo now also supports a composition-first ranking/search flow where the final exhaustive scanner is a tiny slot-level model (`S_scan`) rather than a tiny sequence LM.
+
+### Stage 1: Offline teacher export (`T_family`)
+
+Export teacher labels/features for sampled or user-provided chimera tables:
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.export_teacher_labels \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --n-samples 120000 \
+  --out-table cas12a_shuffling_model/outputs/slot_search/teacher_export/teacher_labels.parquet
+```
+
+Output table includes canonical chimera representation:
+- `chimera_id`
+- `slot_code_11` (`A/L/F/M`, 11 slots)
+- `slot_01 ... slot_11` as integers in `{0,1,2,3}`
+- `full_protein_sequence`
+- `teacher_seq_score_raw`
+- `teacher_seq_score_norm` (robust normalized by length bins)
+- optional junction features `teacher_junction_*`
+
+### Stage 2: Train assistant ranker (`A_rank`)
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.train_assistant_ranker \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --data-table cas12a_shuffling_model/outputs/slot_search/teacher_export/teacher_labels.parquet
+```
+
+Loss is ranking-oriented (`L_top + L_corr + L_pair`) with near-tie filtering and easy/medium/hard pair sampling.
+Best checkpoint selection uses ranking metrics (default `global_corr_chimera`) instead of plain `val_loss`.
+
+### Stage 3: Train tiny slot scorer (`S_scan`) distilled from `A_rank`
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.train_slot_scorer \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --data-table cas12a_shuffling_model/outputs/slot_search/teacher_export/teacher_labels.parquet \
+  --assistant-checkpoint /path/to/assistant_best.pt
+```
+
+`S_scan` architecture:
+- per-slot main effects
+- pairwise slot interaction matrices (`4x4` per slot pair)
+- tiny nonlinear MLP head
+
+### Stage 4: Exhaustive full-space scan (`4^11`)
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.scan_full_space \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --slot-scorer-checkpoint /path/to/slot_scorer_best.pt
+```
+
+This scores all 4,194,304 combinations in batches and exports:
+- `s_scan_shortlist.csv`
+- `s_scan_top.csv`
+- `s_scan_summary.json`
+
+### Stage 5: Optional assistant rerank of shortlist
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.rerank_shortlist \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --shortlist-table /path/to/s_scan_shortlist.csv \
+  --assistant-checkpoint /path/to/assistant_best.pt
+```
+
+### Notes / assumptions
+- Final production search model is `S_scan` (slot-level), not a sequence autoregressive student.
+- `T_family` is used offline for labeling sampled chimera data only.
+- If parquet engine is unavailable, table outputs automatically fall back to CSV.
+- `slot_search_smoke.yaml` limits scan range and sample size for quick functional checks.

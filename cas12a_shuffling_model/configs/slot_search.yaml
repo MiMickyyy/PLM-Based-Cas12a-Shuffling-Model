@@ -1,0 +1,135 @@
+seed: 13
+
+paths:
+  domains_dir: domains
+  sequence_results: Sequence_Result.xlsx
+  atlas_fasta: cas12a.fasta
+  parents:
+    As: AsCas12a.prot
+    Fn: FnCas12a.prot
+    Lb: LbCas12a.prot
+    Mb2: Mb2Cas12a.prot
+  out_processed_dir: cas12a_shuffling_model/data/processed
+  out_active_dir: cas12a_shuffling_model/data/active
+
+teacher:
+  model_source: local
+  model_name_or_path: cas12a_shuffling_model/outputs/teacher_adapt/formal_l4_20260312_003612_adapt/adapted_teacher_model
+  model_name: nferruz/ProtGPT2
+  model_revision: null
+  adapter_path: null
+  add_spaces: true
+  max_length: null
+  cache_sqlite: cas12a_shuffling_model/data/processed/teacher_scores.sqlite
+  junction_window:
+    left: 25
+    right: 25
+
+slot_search:
+  teacher_export:
+    output_dir: cas12a_shuffling_model/outputs/slot_search/teacher_export
+    output_table: cas12a_shuffling_model/outputs/slot_search/teacher_export/teacher_labels.parquet
+    n_samples: 120000
+    score_batch_size: 8
+    normalize_length_bin_size: 50
+    normalize_min_group_size: 64
+    include_junction_features: true
+    slot_code_col: slot_code_11
+    sequence_col: sequence_aa
+
+  assistant_ranker:
+    output_dir: cas12a_shuffling_model/outputs/slot_search/assistant_ranker
+    feature_cols: [teacher_junction_mean, teacher_junction_min, length]
+    model:
+      slot_embed_dim: 16
+      hidden_dim: 128
+      num_layers: 3
+      dropout: 0.1
+      use_extra_features: true
+    train:
+      batch_size: 256
+      epochs: 30
+      lr: 0.001
+      weight_decay: 0.0001
+      grad_clip: 1.0
+      val_fraction: 0.2
+      target_col: teacher_seq_score_norm
+      chimera_only: true
+      top_weight: 1.0
+      corr_weight: 0.3
+      pair_weight: 0.2
+      pair_min_gap: 0.01
+      pair_near_tie_gap: 0.01
+      pair_pairs_per_batch: 512
+      pair_easy_ratio: 0.2
+      pair_medium_ratio: 0.5
+      pair_hard_ratio: 0.3
+      pair_margin: 0.0
+      pair_margin_alpha: 0.5
+      pair_margin_min: 0.0
+      pair_margin_max: 0.3
+      top_fraction: 0.10
+      top_pairs_per_batch: 256
+      top_margin: 0.0
+      oversample_top_fraction: 0.10
+      oversample_weight: 2.0
+      best_metric: global_corr_chimera
+      num_workers: 4
+      cpu_threads: 10
+      interop_threads: 4
+
+  slot_scorer:
+    output_dir: cas12a_shuffling_model/outputs/slot_search/slot_scorer
+    model:
+      slot_embed_dim: 8
+      mlp_hidden_dim: 64
+      mlp_layers: 2
+      dropout: 0.1
+      enable_pairwise: true
+    train:
+      batch_size: 1024
+      epochs: 40
+      lr: 0.001
+      weight_decay: 0.0001
+      grad_clip: 1.0
+      val_fraction: 0.2
+      target_col: assistant_score
+      top_weight: 1.0
+      corr_weight: 0.4
+      pair_weight: 0.2
+      pair_min_gap: 0.01
+      pair_near_tie_gap: 0.01
+      pair_pairs_per_batch: 1024
+      pair_easy_ratio: 0.2
+      pair_medium_ratio: 0.5
+      pair_hard_ratio: 0.3
+      pair_margin: 0.0
+      pair_margin_alpha: 0.5
+      pair_margin_min: 0.0
+      pair_margin_max: 0.3
+      top_fraction: 0.10
+      top_pairs_per_batch: 512
+      top_margin: 0.0
+      oversample_top_fraction: 0.10
+      oversample_weight: 2.0
+      best_metric: global_corr_chimera
+      num_workers: 4
+      cpu_threads: 10
+      interop_threads: 4
+
+  scan:
+    output_dir: cas12a_shuffling_model/outputs/slot_search/full_scan
+    batch_size: 65536
+    shortlist_size: 20000
+    top_k: 50
+    save_all_scores: false
+    progress_every_batches: 4
+    start_index: 0
+    end_index: null
+
+  rerank:
+    output_dir: cas12a_shuffling_model/outputs/slot_search/rerank
+    batch_size: 2048
+    top_k: 50
+    include_sequence: false
+
