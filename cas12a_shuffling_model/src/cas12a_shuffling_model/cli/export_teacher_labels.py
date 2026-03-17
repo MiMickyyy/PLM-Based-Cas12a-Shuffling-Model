@@ -26,6 +26,7 @@ def main() -> None:
     ap.add_argument("--config", default="cas12a_shuffling_model/configs/slot_search.yaml")
     ap.add_argument("--input-table", default=None)
     ap.add_argument("--out-table", default=None)
+    ap.add_argument("--active-table", default=None, help="Path to active combo table (e.g., Sequence_Result.xlsx)")
     ap.add_argument("--validated-domains", default=None)
     ap.add_argument("--n-samples", type=int, default=None)
     ap.add_argument("--seed", type=int, default=None)
@@ -78,6 +79,7 @@ def main() -> None:
         ),
         resume=not bool(args.no_resume),
         include_junction_features=bool(exp_cfg.get("include_junction_features", True)),
+        include_active_rows=bool(exp_cfg.get("include_active_rows", True)),
     )
     saved = export_teacher_labels(
         scorer=scorer,
@@ -85,6 +87,7 @@ def main() -> None:
         validated_domains=domains,
         cfg=run_cfg,
         input_table=args.input_table,
+        active_table=str(args.active_table or cfg.get("paths", {}).get("sequence_results", "")) or None,
         slot_code_col=str(exp_cfg.get("slot_code_col", "slot_code_11")),
         sequence_col=str(exp_cfg.get("sequence_col", "sequence_aa")),
     )
@@ -93,4 +96,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

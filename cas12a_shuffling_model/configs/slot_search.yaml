@@ -34,6 +34,7 @@ slot_search:
     normalize_length_bin_size: 50
     normalize_min_group_size: 64
     include_junction_features: true
+    include_active_rows: true
     slot_code_col: slot_code_11
     sequence_col: sequence_aa
 
@@ -73,6 +74,13 @@ slot_search:
       top_margin: 0.0
       oversample_top_fraction: 0.10
       oversample_weight: 2.0
+      active_codes_path: Sequence_Result.xlsx
+      active_sample_weight: 24.0
+      active_force_train: true
+      active_loss_weight: 0.8
+      active_pairs_per_batch: 256
+      active_margin: 0.20
+      active_min_target_gap: -1.0
       best_metric: global_corr_chimera
       num_workers: 4
       cpu_threads: 10
@@ -116,6 +124,13 @@ slot_search:
       hard_neg_margin: 0.05
       oversample_top_fraction: 0.20
       oversample_weight: 2.0
+      active_codes_path: Sequence_Result.xlsx
+      active_sample_weight: 24.0
+      active_force_train: true
+      active_loss_weight: 1.0
+      active_pairs_per_batch: 512
+      active_margin: 0.20
+      active_min_target_gap: -1.0
       best_metric: global_corr_chimera
       num_workers: 4
       cpu_threads: 10

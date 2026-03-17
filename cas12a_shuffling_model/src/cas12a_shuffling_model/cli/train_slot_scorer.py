@@ -24,6 +24,9 @@ def main() -> None:
     ap.add_argument("--cache-scored-table", default=None)
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--target-col", default=None)
+    ap.add_argument("--active-table", default=None, help="Path to active combo table (e.g., Sequence_Result.xlsx)")
+    ap.add_argument("--active-loss-weight", type=float, default=None)
+    ap.add_argument("--active-sample-weight", type=float, default=None)
     ap.add_argument("--device", default=None)
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=None)
@@ -80,6 +83,17 @@ def main() -> None:
         hard_neg_margin=float(t.get("hard_neg_margin", 0.05)),
         oversample_top_fraction=float(t.get("oversample_top_fraction", 0.10)),
         oversample_weight=float(t.get("oversample_weight", 2.0)),
+        active_codes_path=str(args.active_table or t.get("active_codes_path") or cfg.get("paths", {}).get("sequence_results", "")) or None,
+        active_sample_weight=float(
+            args.active_sample_weight if args.active_sample_weight is not None else t.get("active_sample_weight", 1.0)
+        ),
+        active_force_train=bool(t.get("active_force_train", True)),
+        active_loss_weight=float(
+            args.active_loss_weight if args.active_loss_weight is not None else t.get("active_loss_weight", 0.0)
+        ),
+        active_pairs_per_batch=int(t.get("active_pairs_per_batch", 512)),
+        active_margin=float(t.get("active_margin", 0.10)),
+        active_min_target_gap=float(t.get("active_min_target_gap", 0.0)),
         target_col=str(args.target_col or t.get("target_col", "assistant_score")),
         best_metric=str(t.get("best_metric", "global_corr_chimera")),
         num_workers=int(t.get("num_workers", 0)),

@@ -197,6 +197,40 @@ def hard_negative_rank_loss(
     return F.softplus(-margin_term).mean()
 
 
+def active_vs_background_rank_loss(
+    *,
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    is_active: torch.Tensor,
+    pairs_per_batch: int,
+    margin: float,
+    min_target_gap: float,
+) -> torch.Tensor:
+    mask = torch.isfinite(pred) & torch.isfinite(target)
+    active = mask & (is_active > 0.5)
+    background = mask & (~active)
+    act_idx = torch.nonzero(active, as_tuple=False).squeeze(-1)
+    bg_idx = torch.nonzero(background, as_tuple=False).squeeze(-1)
+    if act_idx.numel() == 0 or bg_idx.numel() == 0:
+        return torch.tensor(0.0, device=pred.device)
+
+    n_pairs = max(1, int(pairs_per_batch))
+    ai = act_idx[torch.randint(0, act_idx.numel(), (n_pairs,), device=pred.device)]
+    bj = bg_idx[torch.randint(0, bg_idx.numel(), (n_pairs,), device=pred.device)]
+    td = target[ai] - target[bj]
+    keep = torch.isfinite(td) & (td >= float(min_target_gap))
+    if int(keep.sum().item()) == 0:
+        return torch.tensor(0.0, device=pred.device)
+
+    ai = ai[keep]
+    bj = bj[keep]
+    td = td[keep]
+    margin_term = (pred[ai] - pred[bj]) - float(margin)
+    base = F.softplus(-margin_term)
+    weights = 1.0 + torch.clamp(td, min=0.0)
+    return torch.mean(base * weights)
+
+
 def _pearson_np(true: np.ndarray, pred: np.ndarray) -> float:
     mask = np.isfinite(true) & np.isfinite(pred)
     if mask.sum() < 2:
@@ -272,7 +306,12 @@ def pair_acc_by_gap_bin(
     return out
 
 
-def ranking_metrics(true: Sequence[float], pred: Sequence[float]) -> dict[str, float]:
+def ranking_metrics(
+    true: Sequence[float],
+    pred: Sequence[float],
+    *,
+    is_active: Sequence[float] | None = None,
+) -> dict[str, float]:
     y_true = np.asarray(true, dtype=np.float64)
     y_pred = np.asarray(pred, dtype=np.float64)
     metrics = {
@@ -287,6 +326,20 @@ def ranking_metrics(true: Sequence[float], pred: Sequence[float]) -> dict[str, f
     metrics["pair_acc_easy"] = acc["easy"]
     metrics["pair_acc_medium"] = acc["medium"]
     metrics["pair_acc_hard"] = acc["hard"]
+    if is_active is not None:
+        a = np.asarray(is_active, dtype=np.float64)
+        finite = np.isfinite(y_true) & np.isfinite(y_pred) & np.isfinite(a)
+        y_pred_f = y_pred[finite]
+        a_f = a[finite] > 0.5
+        n = int(y_pred_f.shape[0])
+        n_active = int(np.sum(a_f))
+        metrics["n_active_eval"] = float(n_active)
+        for k in (50, 100, 500):
+            kk = max(1, min(k, n))
+            top_idx = np.argsort(y_pred_f)[::-1][:kk]
+            hits = int(np.sum(a_f[top_idx]))
+            metrics[f"active_hits_top{k}"] = float(hits)
+            metrics[f"active_recall_top{k}"] = float(hits / n_active) if n_active > 0 else float("nan")
     return metrics
 
 

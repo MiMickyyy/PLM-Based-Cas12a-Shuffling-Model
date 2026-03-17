@@ -39,3 +39,7 @@ Implementation: `src/cas12a_shuffling_model/composition/chimera_repr.py`
 - Ranking-focused losses are used (`top + corr + filtered pairwise + hard-negative top-tail`), with near-tie filtering and easy/medium/hard pair mixing.
 - Best checkpoint selection is ranking-based (`global_corr_chimera` by default), not plain loss.
 - Rerank stage supports optional teacher audit exports for top candidates.
+- Active-aware training is supported:
+  - `export_teacher_labels` can append all 27 active combinations into the teacher-labeled table.
+  - `A_rank` and `S_scan` support active oversampling (`active_sample_weight`) plus explicit active-vs-background ranking loss (`active_loss_weight`).
+  - Active table defaults to `Sequence_Result.xlsx` unless overridden via CLI (`--active-table`).

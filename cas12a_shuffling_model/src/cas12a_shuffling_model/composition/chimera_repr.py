@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import itertools
+from collections import Counter
+from pathlib import Path
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -191,3 +193,38 @@ def enumerate_slot_matrix_batches(
         e = min(end, s + int(batch_size))
         idx = np.arange(s, e, dtype=np.int64)
         yield idx, index_to_slot_matrix(idx)
+
+
+def load_active_code_counts(
+    path: str | Path,
+    *,
+    slot_code_col: str = "slot_code_11",
+    combo_col: str = "combo_compact",
+    letter_slot_cols: Sequence[str] | None = None,
+) -> dict[str, int]:
+    p = Path(path)
+    ext = p.suffix.lower()
+    if ext in {".xlsx", ".xls"}:
+        df = pd.read_excel(p)
+    elif ext in {".csv", ".txt"}:
+        df = pd.read_csv(p)
+    elif ext in {".tsv"}:
+        df = pd.read_csv(p, sep="\t")
+    elif ext == ".parquet":
+        df = pd.read_parquet(p)
+    else:
+        raise ValueError(f"Unsupported active table format: {p}")
+
+    counts: Counter[str] = Counter()
+    for _, row in df.iterrows():
+        try:
+            code = _parse_code_from_row(
+                row,
+                slot_code_col=slot_code_col,
+                combo_col=combo_col,
+                letter_slot_cols=letter_slot_cols,
+            )
+        except Exception:
+            continue
+        counts[code] += 1
+    return dict(counts)
