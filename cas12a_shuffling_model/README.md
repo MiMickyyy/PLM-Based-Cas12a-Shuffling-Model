@@ -343,6 +343,29 @@ PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model
   --out-dir /path/to/gated_eval
 ```
 
+### Strict two-stage policy (teacher for recall, active for rerank)
+
+新实验建议使用严格职责分离：
+- Stage A (`recall_stage_score`): teacher/family-aware pool expansion
+- Stage B (`final_score`): active-only 或 active-heavy final rerank
+
+运行固定实验矩阵（`scan_only / teacher_recall / teacher_plausibility_filter / teacher_recall_plus_diversity` × `active_only / active_heavy`）：
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.eval_two_stage_matrix \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --shortlist-table /path/to/s_scan_shortlist.csv \
+  --assistant-checkpoint /path/to/assistant_best.pt \
+  --active-table Sequence_Result.xlsx \
+  --recall-pool-size 100000 \
+  --out-dir /path/to/two_stage_matrix
+```
+
+输出：
+- `matrix_summary.csv`（核心对照：present@20k/50k/100k, hits@50/100, missing_count_in_pool, loo_hits）
+- `two_stage_matrix_report.json`
+- 每个组合独立目录（包含 `recall_ranked_all.csv`, `rerank_all.csv`, `missing_active_diagnosis.csv`）
+
 ### Notes / assumptions
 - Final production search model is `S_scan` (slot-level), not a sequence autoregressive student.
 - `T_family` is used offline for labeling sampled chimera data only.

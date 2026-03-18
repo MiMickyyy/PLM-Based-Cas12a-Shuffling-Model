@@ -33,6 +33,24 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=None)
     ap.add_argument("--dual-head-alpha", type=float, default=None)
     ap.add_argument("--active-table", default=None)
+    ap.add_argument("--use-two-stage-policy", action="store_true")
+    ap.add_argument("--no-two-stage-policy", action="store_true")
+    ap.add_argument(
+        "--recall-policy",
+        choices=[
+            "scan_only",
+            "teacher_recall",
+            "teacher_plausibility_filter",
+            "teacher_recall_plus_diversity",
+            "teacher_head",
+            "teacher_active_mix",
+            "scan_teacher_mix",
+            "active_only",
+        ],
+        default=None,
+    )
+    ap.add_argument("--final-rerank-policy", choices=["active_only", "active_heavy"], default=None)
+    ap.add_argument("--recall-diversity-weight", type=float, default=None)
     ap.add_argument("--policy-mode", choices=["global_fixed", "hard_gated", "soft_gated"], default=None)
     ap.add_argument(
         "--gate-signal",
@@ -49,11 +67,6 @@ def main() -> None:
     ap.add_argument("--hard-similarity-threshold", type=float, default=None)
     ap.add_argument("--soft-center", type=float, default=None)
     ap.add_argument("--soft-scale", type=float, default=None)
-    ap.add_argument(
-        "--recall-policy",
-        choices=["scan_teacher_mix", "teacher_head", "teacher_active_mix", "scan_only", "active_only"],
-        default=None,
-    )
     ap.add_argument("--recall-teacher-weight", type=float, default=None)
     ap.add_argument("--recall-active-weight", type=float, default=None)
     ap.add_argument("--recall-scan-weight", type=float, default=None)
@@ -128,6 +141,30 @@ def main() -> None:
             top_k=int(args.top_k if args.top_k is not None else c.get("top_k", 50)),
             include_sequence=include_sequence,
             dual_head_alpha=(float(args.dual_head_alpha) if args.dual_head_alpha is not None else c.get("dual_head_alpha")),
+            use_two_stage_policy=(
+                False
+                if args.no_two_stage_policy
+                else (
+                    True
+                    if args.use_two_stage_policy
+                    else bool(c.get("use_two_stage_policy", True))
+                )
+            ),
+            recall_policy=str(
+                args.recall_policy
+                if args.recall_policy is not None
+                else c.get("recall_policy", gp.get("recall_policy", "teacher_recall"))
+            ),
+            final_rerank_policy=str(
+                args.final_rerank_policy
+                if args.final_rerank_policy is not None
+                else c.get("final_rerank_policy", "active_only")
+            ),
+            recall_diversity_weight=float(
+                args.recall_diversity_weight
+                if args.recall_diversity_weight is not None
+                else c.get("recall_diversity_weight", gp.get("recall_diversity_weight", 0.05))
+            ),
             policy_mode=str(args.policy_mode if args.policy_mode is not None else gp.get("policy_mode", c.get("policy_mode", "global_fixed"))),
             gate_signal=str(
                 args.gate_signal
@@ -175,9 +212,6 @@ def main() -> None:
             ),
             soft_scale=float(
                 args.soft_scale if args.soft_scale is not None else gp.get("soft_scale", c.get("soft_scale", 8.0))
-            ),
-            recall_policy=str(
-                args.recall_policy if args.recall_policy is not None else gp.get("recall_policy", c.get("recall_policy", "scan_teacher_mix"))
             ),
             recall_teacher_weight=float(
                 args.recall_teacher_weight

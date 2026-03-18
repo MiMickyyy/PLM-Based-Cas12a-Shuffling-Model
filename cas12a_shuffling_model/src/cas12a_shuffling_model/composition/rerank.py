@@ -17,6 +17,7 @@ from cas12a_shuffling_model.composition.active_prior import (
 from cas12a_shuffling_model.composition.assistant_ranker import AssistantRankerScorer
 from cas12a_shuffling_model.composition.chimera_repr import canonicalize_chimera_table
 from cas12a_shuffling_model.composition.gated_policy import GatedPolicyConfig, apply_gated_policy
+from cas12a_shuffling_model.composition.two_stage_policy import TwoStagePolicyConfig, apply_two_stage_policy
 from cas12a_shuffling_model.composition.table_io import read_table
 from cas12a_shuffling_model.search.combo_compact import build_sequence_from_combo
 from cas12a_shuffling_model.teacher.protgpt2_scorer import ProtGPT2Scorer
@@ -41,7 +42,7 @@ class RerankConfig:
     hard_similarity_threshold: float = 0.55
     soft_center: float | None = None
     soft_scale: float = 8.0
-    recall_policy: str = "scan_teacher_mix"
+    recall_policy: str = "teacher_recall"
     recall_teacher_weight: float = 0.70
     recall_active_weight: float = 0.10
     recall_scan_weight: float = 0.20
@@ -57,6 +58,9 @@ class RerankConfig:
     active_prior_base_score_col: str = "assistant_score"
     active_eval_top_ks: tuple[int, ...] = (50, 100)
     recall_eval_top_ks: tuple[int, ...] = (20000, 50000, 100000)
+    use_two_stage_policy: bool = True
+    final_rerank_policy: str = "active_only"
+    recall_diversity_weight: float = 0.05
     teacher_audit: bool = False
     teacher_audit_top_k: int = 200
     teacher_audit_batch_size: int = 8
@@ -120,33 +124,57 @@ def rerank_shortlist(
         dual_head_alpha=cfg.dual_head_alpha,
     )
     active_codes_norm = ensure_active_codes(active_codes or [])
-    scored = apply_gated_policy(
-        scored,
-        active_codes=active_codes_norm,
-        cfg=GatedPolicyConfig(
-            policy_mode=str(cfg.policy_mode),
-            gate_signal=str(cfg.gate_signal),
-            alpha_far=float(cfg.alpha_far),
-            alpha_near=float(cfg.alpha_near),
-            similarity_beta=float(cfg.similarity_beta),
-            kernel_gamma=float(cfg.kernel_gamma),
-            density_radius=int(cfg.density_radius),
-            density_gamma=float(cfg.density_gamma),
-            hard_distance_threshold=int(cfg.hard_distance_threshold),
-            hard_similarity_threshold=float(cfg.hard_similarity_threshold),
-            soft_center=(float(cfg.soft_center) if cfg.soft_center is not None else None),
-            soft_scale=float(cfg.soft_scale),
-            recall_policy=str(cfg.recall_policy),
-            recall_teacher_weight=float(cfg.recall_teacher_weight),
-            recall_active_weight=float(cfg.recall_active_weight),
-            recall_scan_weight=float(cfg.recall_scan_weight),
-            recall_pool_size=(int(cfg.recall_pool_size) if cfg.recall_pool_size is not None else None),
-            teacher_usage_mode=str(cfg.teacher_usage_mode),
-            teacher_plausibility_quantile=float(cfg.teacher_plausibility_quantile),
-            teacher_plausibility_penalty=float(cfg.teacher_plausibility_penalty),
-            slot_weights=cfg.active_prior_slot_weights,
-        ),
-    )
+    if bool(cfg.use_two_stage_policy):
+        sim_mode = str(cfg.active_prior_mode).strip().lower()
+        if sim_mode in {"", "none"}:
+            sim_mode = "kernel_density_over_actives"
+        scored = apply_two_stage_policy(
+            scored,
+            active_codes=active_codes_norm,
+            cfg=TwoStagePolicyConfig(
+                recall_policy=str(cfg.recall_policy),
+                final_rerank_policy=str(cfg.final_rerank_policy),
+                recall_teacher_weight=float(cfg.recall_teacher_weight),
+                recall_scan_weight=float(cfg.recall_scan_weight),
+                recall_active_weight=float(cfg.recall_active_weight),
+                recall_diversity_weight=float(cfg.recall_diversity_weight),
+                recall_pool_size=(int(cfg.recall_pool_size) if cfg.recall_pool_size is not None else None),
+                active_similarity_mode=sim_mode,
+                active_similarity_beta=float(cfg.similarity_beta),
+                active_similarity_gamma=float(cfg.active_prior_gamma),
+                active_similarity_slot_weights=cfg.active_prior_slot_weights,
+                teacher_plausibility_quantile=float(cfg.teacher_plausibility_quantile),
+                teacher_plausibility_penalty=float(cfg.teacher_plausibility_penalty),
+            ),
+        )
+    else:
+        scored = apply_gated_policy(
+            scored,
+            active_codes=active_codes_norm,
+            cfg=GatedPolicyConfig(
+                policy_mode=str(cfg.policy_mode),
+                gate_signal=str(cfg.gate_signal),
+                alpha_far=float(cfg.alpha_far),
+                alpha_near=float(cfg.alpha_near),
+                similarity_beta=float(cfg.similarity_beta),
+                kernel_gamma=float(cfg.kernel_gamma),
+                density_radius=int(cfg.density_radius),
+                density_gamma=float(cfg.density_gamma),
+                hard_distance_threshold=int(cfg.hard_distance_threshold),
+                hard_similarity_threshold=float(cfg.hard_similarity_threshold),
+                soft_center=(float(cfg.soft_center) if cfg.soft_center is not None else None),
+                soft_scale=float(cfg.soft_scale),
+                recall_policy=str(cfg.recall_policy),
+                recall_teacher_weight=float(cfg.recall_teacher_weight),
+                recall_active_weight=float(cfg.recall_active_weight),
+                recall_scan_weight=float(cfg.recall_scan_weight),
+                recall_pool_size=(int(cfg.recall_pool_size) if cfg.recall_pool_size is not None else None),
+                teacher_usage_mode=str(cfg.teacher_usage_mode),
+                teacher_plausibility_quantile=float(cfg.teacher_plausibility_quantile),
+                teacher_plausibility_penalty=float(cfg.teacher_plausibility_penalty),
+                slot_weights=cfg.active_prior_slot_weights,
+            ),
+        )
 
     if bool(cfg.include_sequence) and validated_domains is not None:
         scored["full_protein_sequence"] = scored["slot_code_11"].map(
@@ -163,6 +191,8 @@ def rerank_shortlist(
     rerank_pool["rerank_stage_rank"] = rerank_pool["assistant_rank"]
     rerank_pool["final_score"] = pd.to_numeric(rerank_pool["final_gated_score"], errors="coerce")
     scored = rerank_pool
+    recall_all_path = out_path / "recall_ranked_all.csv"
+    recall_sorted.to_csv(recall_all_path, index=False)
     top = scored.head(int(cfg.top_k)).copy().reset_index(drop=True)
     top["final_rank"] = (top.index + 1).astype(int)
 
@@ -179,6 +209,10 @@ def rerank_shortlist(
         "n_recall_pool": int(pool_size),
         "top_k": int(cfg.top_k),
         "final_score_col": "final_gated_score",
+        "use_two_stage_policy": bool(cfg.use_two_stage_policy),
+        "recall_policy": cfg.recall_policy,
+        "final_rerank_policy": cfg.final_rerank_policy,
+        "recall_diversity_weight": float(cfg.recall_diversity_weight),
         "policy_mode": cfg.policy_mode,
         "gate_signal": cfg.gate_signal,
         "alpha_far": float(cfg.alpha_far),
@@ -187,7 +221,6 @@ def rerank_shortlist(
         "teacher_usage_mode": cfg.teacher_usage_mode,
         "teacher_plausibility_quantile": float(cfg.teacher_plausibility_quantile),
         "teacher_plausibility_penalty": float(cfg.teacher_plausibility_penalty),
-        "recall_policy": cfg.recall_policy,
         "recall_pool_size": cfg.recall_pool_size,
         "dual_head_alpha": cfg.dual_head_alpha,
     }
@@ -195,6 +228,7 @@ def rerank_shortlist(
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     outputs = {
         "all_csv": str(all_path),
+        "recall_csv": str(recall_all_path),
         "top_csv": str(top_path),
         "meta_json": str(meta_path),
     }

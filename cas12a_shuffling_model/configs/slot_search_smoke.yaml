@@ -189,12 +189,15 @@ slot_search:
     include_sequence: false
     active_table: Sequence_Result.xlsx
     dual_head_alpha: 0.15
+    use_two_stage_policy: true
+    recall_policy: teacher_recall
+    final_rerank_policy: active_only
+    recall_diversity_weight: 0.05
     policy_mode: hard_gated
     gate_signal: kernel_similarity_to_actives
     alpha_far: 0.65
     alpha_near: 0.10
     similarity_beta: 0.15
-    recall_policy: scan_teacher_mix
     recall_pool_size: 2000
     teacher_usage_mode: recall_only
     active_prior_mode: kernel_density_over_actives
