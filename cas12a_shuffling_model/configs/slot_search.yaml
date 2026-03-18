@@ -167,6 +167,28 @@ slot_search:
     start_index: 0
     end_index: null
 
+  gated_policy:
+    policy_mode: soft_gated
+    gate_signal: kernel_similarity_to_actives
+    alpha_far: 0.65
+    alpha_near: 0.10
+    similarity_beta: 0.15
+    kernel_gamma: 0.70
+    density_radius: 3
+    density_gamma: 1.0
+    hard_distance_threshold: 3
+    hard_similarity_threshold: 0.55
+    soft_center: 0.35
+    soft_scale: 8.0
+    recall_policy: scan_teacher_mix
+    recall_teacher_weight: 0.70
+    recall_active_weight: 0.10
+    recall_scan_weight: 0.20
+    recall_pool_size: 100000
+    teacher_usage_mode: recall_only
+    teacher_plausibility_quantile: 0.05
+    teacher_plausibility_penalty: 0.50
+
   rerank:
     output_dir: cas12a_shuffling_model/outputs/slot_search/rerank
     batch_size: 2048
@@ -174,12 +196,21 @@ slot_search:
     include_sequence: false
     active_table: Sequence_Result.xlsx
     dual_head_alpha: 0.15
+    policy_mode: soft_gated
+    gate_signal: kernel_similarity_to_actives
+    alpha_far: 0.65
+    alpha_near: 0.10
+    similarity_beta: 0.15
+    recall_policy: scan_teacher_mix
+    recall_pool_size: 100000
+    teacher_usage_mode: recall_only
     active_prior_mode: kernel_density_over_actives
     active_prior_beta: 0.15
     active_prior_gamma: 0.70
     active_prior_base_score_col: assistant_score
     active_prior_beta_sweep: [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
     active_eval_top_ks: [50, 100]
+    recall_eval_top_ks: [20000, 50000, 100000]
     teacher_audit: true
     teacher_audit_top_k: 200
     teacher_audit_batch_size: 8

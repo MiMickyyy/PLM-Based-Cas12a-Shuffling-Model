@@ -10,14 +10,13 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from cas12a_shuffling_model.composition.active_prior import (
-    ActivePriorConfig,
     active_prior_beta_sweep,
     active_ranking_summary,
-    apply_active_prior,
     ensure_active_codes,
 )
 from cas12a_shuffling_model.composition.assistant_ranker import AssistantRankerScorer
 from cas12a_shuffling_model.composition.chimera_repr import canonicalize_chimera_table
+from cas12a_shuffling_model.composition.gated_policy import GatedPolicyConfig, apply_gated_policy
 from cas12a_shuffling_model.composition.table_io import read_table
 from cas12a_shuffling_model.search.combo_compact import build_sequence_from_combo
 from cas12a_shuffling_model.teacher.protgpt2_scorer import ProtGPT2Scorer
@@ -30,6 +29,26 @@ class RerankConfig:
     top_k: int = 50
     include_sequence: bool = False
     dual_head_alpha: float | None = None
+    policy_mode: str = "global_fixed"
+    gate_signal: str = "kernel_similarity_to_actives"
+    alpha_far: float = 0.60
+    alpha_near: float = 0.15
+    similarity_beta: float = 0.15
+    kernel_gamma: float = 0.70
+    density_radius: int = 3
+    density_gamma: float = 1.0
+    hard_distance_threshold: int = 3
+    hard_similarity_threshold: float = 0.55
+    soft_center: float | None = None
+    soft_scale: float = 8.0
+    recall_policy: str = "scan_teacher_mix"
+    recall_teacher_weight: float = 0.70
+    recall_active_weight: float = 0.10
+    recall_scan_weight: float = 0.20
+    recall_pool_size: int | None = 100000
+    teacher_usage_mode: str = "none"
+    teacher_plausibility_quantile: float = 0.05
+    teacher_plausibility_penalty: float = 0.50
     active_prior_mode: str = "none"
     active_prior_beta: float = 0.0
     active_prior_gamma: float = 0.7
@@ -37,6 +56,7 @@ class RerankConfig:
     active_prior_beta_sweep: tuple[float, ...] = ()
     active_prior_base_score_col: str = "assistant_score"
     active_eval_top_ks: tuple[int, ...] = (50, 100)
+    recall_eval_top_ks: tuple[int, ...] = (20000, 50000, 100000)
     teacher_audit: bool = False
     teacher_audit_top_k: int = 200
     teacher_audit_batch_size: int = 8
@@ -99,35 +119,50 @@ def rerank_shortlist(
         batch_size=int(cfg.batch_size),
         dual_head_alpha=cfg.dual_head_alpha,
     )
-
-    final_score_col = "assistant_score"
     active_codes_norm = ensure_active_codes(active_codes or [])
-    if len(active_codes_norm) > 0:
-        scored = apply_active_prior(
-            scored,
-            score_col=str(cfg.active_prior_base_score_col or "assistant_score"),
-            active_codes=active_codes_norm,
-            cfg=ActivePriorConfig(
-                mode=str(cfg.active_prior_mode),
-                beta=float(cfg.active_prior_beta),
-                gamma=float(cfg.active_prior_gamma),
-                slot_weights=cfg.active_prior_slot_weights,
-            ),
-        )
-        final_score_col = "final_score"
-    else:
-        scored["active_similarity"] = 0.0
-        scored["min_hamming_to_active"] = np.nan
-        scored["final_score"] = pd.to_numeric(scored["assistant_score"], errors="coerce")
-        final_score_col = "final_score"
+    scored = apply_gated_policy(
+        scored,
+        active_codes=active_codes_norm,
+        cfg=GatedPolicyConfig(
+            policy_mode=str(cfg.policy_mode),
+            gate_signal=str(cfg.gate_signal),
+            alpha_far=float(cfg.alpha_far),
+            alpha_near=float(cfg.alpha_near),
+            similarity_beta=float(cfg.similarity_beta),
+            kernel_gamma=float(cfg.kernel_gamma),
+            density_radius=int(cfg.density_radius),
+            density_gamma=float(cfg.density_gamma),
+            hard_distance_threshold=int(cfg.hard_distance_threshold),
+            hard_similarity_threshold=float(cfg.hard_similarity_threshold),
+            soft_center=(float(cfg.soft_center) if cfg.soft_center is not None else None),
+            soft_scale=float(cfg.soft_scale),
+            recall_policy=str(cfg.recall_policy),
+            recall_teacher_weight=float(cfg.recall_teacher_weight),
+            recall_active_weight=float(cfg.recall_active_weight),
+            recall_scan_weight=float(cfg.recall_scan_weight),
+            recall_pool_size=(int(cfg.recall_pool_size) if cfg.recall_pool_size is not None else None),
+            teacher_usage_mode=str(cfg.teacher_usage_mode),
+            teacher_plausibility_quantile=float(cfg.teacher_plausibility_quantile),
+            teacher_plausibility_penalty=float(cfg.teacher_plausibility_penalty),
+            slot_weights=cfg.active_prior_slot_weights,
+        ),
+    )
 
     if bool(cfg.include_sequence) and validated_domains is not None:
         scored["full_protein_sequence"] = scored["slot_code_11"].map(
             lambda code: build_sequence_from_combo(str(code), validated_domains)
         )
 
-    scored = scored.sort_values(final_score_col, ascending=False).reset_index(drop=True)
-    scored["assistant_rank"] = (scored.index + 1).astype(int)
+    recall_sorted = scored.sort_values("recall_stage_score", ascending=False).reset_index(drop=True)
+    recall_sorted["recall_stage_rank"] = (recall_sorted.index + 1).astype(int)
+    pool_size = int(cfg.recall_pool_size) if cfg.recall_pool_size is not None else int(len(recall_sorted))
+    pool_size = max(1, min(pool_size, int(len(recall_sorted))))
+    rerank_pool = recall_sorted.head(pool_size).copy().reset_index(drop=True)
+    rerank_pool = rerank_pool.sort_values("final_gated_score", ascending=False).reset_index(drop=True)
+    rerank_pool["assistant_rank"] = (rerank_pool.index + 1).astype(int)
+    rerank_pool["rerank_stage_rank"] = rerank_pool["assistant_rank"]
+    rerank_pool["final_score"] = pd.to_numeric(rerank_pool["final_gated_score"], errors="coerce")
+    scored = rerank_pool
     top = scored.head(int(cfg.top_k)).copy().reset_index(drop=True)
     top["final_rank"] = (top.index + 1).astype(int)
 
@@ -139,11 +174,21 @@ def rerank_shortlist(
     meta = {
         "shortlist_table": shortlist_table,
         "assistant_checkpoint": assistant_checkpoint,
+        "n_input_shortlist": int(len(canonical)),
         "n_shortlist": int(len(scored)),
+        "n_recall_pool": int(pool_size),
         "top_k": int(cfg.top_k),
-        "final_score_col": final_score_col,
-        "active_prior_mode": cfg.active_prior_mode,
-        "active_prior_beta": float(cfg.active_prior_beta),
+        "final_score_col": "final_gated_score",
+        "policy_mode": cfg.policy_mode,
+        "gate_signal": cfg.gate_signal,
+        "alpha_far": float(cfg.alpha_far),
+        "alpha_near": float(cfg.alpha_near),
+        "similarity_beta": float(cfg.similarity_beta),
+        "teacher_usage_mode": cfg.teacher_usage_mode,
+        "teacher_plausibility_quantile": float(cfg.teacher_plausibility_quantile),
+        "teacher_plausibility_penalty": float(cfg.teacher_plausibility_penalty),
+        "recall_policy": cfg.recall_policy,
+        "recall_pool_size": cfg.recall_pool_size,
         "dual_head_alpha": cfg.dual_head_alpha,
     }
     meta_path = out_path / "assistant_rerank_meta.json"
@@ -154,9 +199,16 @@ def rerank_shortlist(
         "meta_json": str(meta_path),
     }
     if len(active_codes_norm) > 0:
-        active_summary = active_ranking_summary(
+        recall_summary = active_ranking_summary(
+            df=recall_sorted,
+            score_col="recall_stage_score",
+            active_codes=active_codes_norm,
+            top_ks=cfg.recall_eval_top_ks,
+            distance_ks=cfg.recall_eval_top_ks,
+        )
+        rerank_summary = active_ranking_summary(
             df=scored,
-            score_col=final_score_col,
+            score_col="final_gated_score",
             active_codes=active_codes_norm,
             top_ks=cfg.active_eval_top_ks,
             distance_ks=cfg.active_eval_top_ks,
@@ -167,7 +219,13 @@ def rerank_shortlist(
             active_codes=active_codes_norm,
             top_k=int(cfg.top_k),
         )
+        active_summary = {f"recall_{k}": v for k, v in recall_summary.items()}
+        active_summary.update({f"rerank_{k}": v for k, v in rerank_summary.items()})
         active_summary.update(suppression)
+        active_summary["active_codes_total"] = int(len(active_codes_norm))
+        active_summary["active_missing_from_recall_pool"] = int(
+            len(set(active_codes_norm) - set(scored["slot_code_11"].astype(str).tolist()))
+        )
         active_summary_path = out_path / "assistant_active_ranking_summary.json"
         active_summary_path.write_text(json.dumps(active_summary, indent=2), encoding="utf-8")
         outputs["active_summary_json"] = str(active_summary_path)
@@ -224,23 +282,35 @@ def rerank_shortlist(
             on="slot_code_11",
             how="left",
         )
-        corr_pearson = float(audit_out["assistant_score"].corr(audit_out["teacher_global_score"], method="pearson"))
+        corr_pearson = float(audit_out["final_gated_score"].corr(audit_out["teacher_global_score"], method="pearson"))
         if (
-            int(audit_out["assistant_score"].nunique(dropna=True)) > 1
+            int(audit_out["final_gated_score"].nunique(dropna=True)) > 1
             and int(audit_out["teacher_global_score"].nunique(dropna=True)) > 1
         ):
             corr_spearman = float(
                 spearmanr(
-                    audit_out["assistant_score"].to_numpy(),
+                    audit_out["final_gated_score"].to_numpy(),
                     audit_out["teacher_global_score"].to_numpy(),
                 ).correlation
             )
         else:
             corr_spearman = float("nan")
+        teacher_head_corr = float("nan")
+        active_head_corr = float("nan")
+        if "assistant_teacher_head_score" in audit_out.columns:
+            teacher_head_corr = float(
+                audit_out["assistant_teacher_head_score"].corr(audit_out["teacher_global_score"], method="pearson")
+            )
+        if "assistant_active_head_score" in audit_out.columns:
+            active_head_corr = float(
+                audit_out["assistant_active_head_score"].corr(audit_out["teacher_global_score"], method="pearson")
+            )
         audit_meta = {
             "audit_top_k": int(audit_n),
-            "assistant_teacher_corr_pearson": corr_pearson,
-            "assistant_teacher_corr_spearman": corr_spearman,
+            "final_teacher_corr_pearson": corr_pearson,
+            "final_teacher_corr_spearman": corr_spearman,
+            "teacher_head_teacher_corr_pearson": teacher_head_corr,
+            "active_head_teacher_corr_pearson": active_head_corr,
             "teacher_model_fingerprint": getattr(teacher_scorer, "model_fingerprint", None),
         }
         audit_csv = out_path / "assistant_teacher_audit_top.csv"

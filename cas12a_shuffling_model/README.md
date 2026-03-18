@@ -286,6 +286,63 @@ PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model
   --out-csv /path/to/active_rerank_report.csv
 ```
 
+### Gated two-stage rerank (recall vs local basin)
+
+当前默认策略已改为显式两阶段：
+- **Recall stage**：teacher/family-aware (`recall_stage_score`)
+- **Rerank stage**：active-basin-aware (`rerank_stage_score`)
+- **Final gated**：`final_gated_score`（hard/soft gate，near-basin 时 active head + similarity 更强）
+
+在 `rerank_shortlist` 输出中会同时导出：
+- `score_teacher`
+- `score_active`
+- `sim_to_active`
+- `dist_to_active`
+- `recall_stage_score`
+- `rerank_stage_score`
+- `final_gated_score`
+
+硬门控示例（near/far 阈值切换）：
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.rerank_shortlist \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --shortlist-table /path/to/s_scan_shortlist.csv \
+  --assistant-checkpoint /path/to/assistant_best.pt \
+  --active-table Sequence_Result.xlsx \
+  --policy-mode hard_gated \
+  --gate-signal min_hamming_to_active \
+  --hard-distance-threshold 3 \
+  --alpha-far 0.65 \
+  --alpha-near 0.10 \
+  --similarity-beta 0.15
+```
+
+软门控示例（连续权重迁移）：
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.rerank_shortlist \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --shortlist-table /path/to/s_scan_shortlist.csv \
+  --assistant-checkpoint /path/to/assistant_best.pt \
+  --active-table Sequence_Result.xlsx \
+  --policy-mode soft_gated \
+  --gate-signal kernel_similarity_to_actives \
+  --soft-center 0.35 \
+  --soft-scale 8.0 \
+  --teacher-usage-mode plausibility_filter
+```
+
+一键输出策略对比 + 诊断（LOO、distance-stratified、missing-active）：
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.eval_gated_policies \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --input-table /path/to/assistant_reranked_all.csv \
+  --active-table Sequence_Result.xlsx \
+  --out-dir /path/to/gated_eval
+```
+
 ### Notes / assumptions
 - Final production search model is `S_scan` (slot-level), not a sequence autoregressive student.
 - `T_family` is used offline for labeling sampled chimera data only.

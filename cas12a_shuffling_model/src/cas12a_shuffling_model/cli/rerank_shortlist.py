@@ -33,6 +33,34 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=None)
     ap.add_argument("--dual-head-alpha", type=float, default=None)
     ap.add_argument("--active-table", default=None)
+    ap.add_argument("--policy-mode", choices=["global_fixed", "hard_gated", "soft_gated"], default=None)
+    ap.add_argument(
+        "--gate-signal",
+        choices=["min_hamming_to_active", "kernel_similarity_to_actives", "active_density_score"],
+        default=None,
+    )
+    ap.add_argument("--alpha-far", type=float, default=None)
+    ap.add_argument("--alpha-near", type=float, default=None)
+    ap.add_argument("--similarity-beta", type=float, default=None)
+    ap.add_argument("--kernel-gamma", type=float, default=None)
+    ap.add_argument("--density-radius", type=int, default=None)
+    ap.add_argument("--density-gamma", type=float, default=None)
+    ap.add_argument("--hard-distance-threshold", type=int, default=None)
+    ap.add_argument("--hard-similarity-threshold", type=float, default=None)
+    ap.add_argument("--soft-center", type=float, default=None)
+    ap.add_argument("--soft-scale", type=float, default=None)
+    ap.add_argument(
+        "--recall-policy",
+        choices=["scan_teacher_mix", "teacher_head", "teacher_active_mix", "scan_only", "active_only"],
+        default=None,
+    )
+    ap.add_argument("--recall-teacher-weight", type=float, default=None)
+    ap.add_argument("--recall-active-weight", type=float, default=None)
+    ap.add_argument("--recall-scan-weight", type=float, default=None)
+    ap.add_argument("--recall-pool-size", type=int, default=None)
+    ap.add_argument("--teacher-usage-mode", choices=["none", "recall_only", "plausibility_filter"], default=None)
+    ap.add_argument("--teacher-plausibility-quantile", type=float, default=None)
+    ap.add_argument("--teacher-plausibility-penalty", type=float, default=None)
     ap.add_argument(
         "--active-prior-mode",
         default=None,
@@ -66,6 +94,7 @@ def main() -> None:
         model_revision=args.teacher_model_revision,
     )
     c = cfg.get("slot_search", {}).get("rerank", {})
+    gp = cfg.get("slot_search", {}).get("gated_policy", {})
 
     run_dir = args.out_dir or c.get("output_dir")
     if not run_dir:
@@ -99,6 +128,100 @@ def main() -> None:
             top_k=int(args.top_k if args.top_k is not None else c.get("top_k", 50)),
             include_sequence=include_sequence,
             dual_head_alpha=(float(args.dual_head_alpha) if args.dual_head_alpha is not None else c.get("dual_head_alpha")),
+            policy_mode=str(args.policy_mode if args.policy_mode is not None else gp.get("policy_mode", c.get("policy_mode", "global_fixed"))),
+            gate_signal=str(
+                args.gate_signal
+                if args.gate_signal is not None
+                else gp.get("gate_signal", c.get("gate_signal", "kernel_similarity_to_actives"))
+            ),
+            alpha_far=float(
+                args.alpha_far if args.alpha_far is not None else gp.get("alpha_far", c.get("alpha_far", 0.60))
+            ),
+            alpha_near=float(
+                args.alpha_near if args.alpha_near is not None else gp.get("alpha_near", c.get("alpha_near", 0.15))
+            ),
+            similarity_beta=float(
+                args.similarity_beta
+                if args.similarity_beta is not None
+                else gp.get("similarity_beta", c.get("active_prior_beta", 0.15))
+            ),
+            kernel_gamma=float(
+                args.kernel_gamma if args.kernel_gamma is not None else gp.get("kernel_gamma", c.get("active_prior_gamma", 0.7))
+            ),
+            density_radius=int(
+                args.density_radius if args.density_radius is not None else gp.get("density_radius", c.get("density_radius", 3))
+            ),
+            density_gamma=float(
+                args.density_gamma if args.density_gamma is not None else gp.get("density_gamma", c.get("density_gamma", 1.0))
+            ),
+            hard_distance_threshold=int(
+                args.hard_distance_threshold
+                if args.hard_distance_threshold is not None
+                else gp.get("hard_distance_threshold", c.get("hard_distance_threshold", 3))
+            ),
+            hard_similarity_threshold=float(
+                args.hard_similarity_threshold
+                if args.hard_similarity_threshold is not None
+                else gp.get("hard_similarity_threshold", c.get("hard_similarity_threshold", 0.55))
+            ),
+            soft_center=(
+                float(args.soft_center)
+                if args.soft_center is not None
+                else (
+                    float(gp.get("soft_center"))
+                    if gp.get("soft_center", None) is not None
+                    else (float(c.get("soft_center")) if c.get("soft_center", None) is not None else None)
+                )
+            ),
+            soft_scale=float(
+                args.soft_scale if args.soft_scale is not None else gp.get("soft_scale", c.get("soft_scale", 8.0))
+            ),
+            recall_policy=str(
+                args.recall_policy if args.recall_policy is not None else gp.get("recall_policy", c.get("recall_policy", "scan_teacher_mix"))
+            ),
+            recall_teacher_weight=float(
+                args.recall_teacher_weight
+                if args.recall_teacher_weight is not None
+                else gp.get("recall_teacher_weight", c.get("recall_teacher_weight", 0.70))
+            ),
+            recall_active_weight=float(
+                args.recall_active_weight
+                if args.recall_active_weight is not None
+                else gp.get("recall_active_weight", c.get("recall_active_weight", 0.10))
+            ),
+            recall_scan_weight=float(
+                args.recall_scan_weight
+                if args.recall_scan_weight is not None
+                else gp.get("recall_scan_weight", c.get("recall_scan_weight", 0.20))
+            ),
+            recall_pool_size=(
+                int(args.recall_pool_size)
+                if args.recall_pool_size is not None
+                else (
+                    int(gp.get("recall_pool_size"))
+                    if gp.get("recall_pool_size", None) is not None
+                    else (
+                        int(c.get("recall_pool_size"))
+                        if c.get("recall_pool_size", None) is not None
+                        else None
+                    )
+                )
+            ),
+            teacher_usage_mode=str(
+                args.teacher_usage_mode
+                if args.teacher_usage_mode is not None
+                else gp.get("teacher_usage_mode", c.get("teacher_usage_mode", "none"))
+            ),
+            teacher_plausibility_quantile=float(
+                args.teacher_plausibility_quantile
+                if args.teacher_plausibility_quantile is not None
+                else gp.get("teacher_plausibility_quantile", c.get("teacher_plausibility_quantile", 0.05))
+            ),
+            teacher_plausibility_penalty=float(
+                args.teacher_plausibility_penalty
+                if args.teacher_plausibility_penalty is not None
+                else gp.get("teacher_plausibility_penalty", c.get("teacher_plausibility_penalty", 0.50))
+            ),
             active_prior_mode=str(
                 args.active_prior_mode if args.active_prior_mode is not None else c.get("active_prior_mode", "none")
             ),
@@ -126,6 +249,7 @@ def main() -> None:
                 else c.get("active_prior_base_score_col", "assistant_score")
             ),
             active_eval_top_ks=tuple(int(x) for x in c.get("active_eval_top_ks", [50, 100])),
+            recall_eval_top_ks=tuple(int(x) for x in c.get("recall_eval_top_ks", [20000, 50000, 100000])),
             teacher_audit=teacher_audit,
             teacher_audit_top_k=int(
                 args.teacher_audit_top_k if args.teacher_audit_top_k is not None else c.get("teacher_audit_top_k", 200)

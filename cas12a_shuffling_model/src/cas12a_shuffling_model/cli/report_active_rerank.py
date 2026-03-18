@@ -56,20 +56,31 @@ def main() -> None:
 
     for label, path in _parse_named_tables(args.named_tables):
         df = read_table(path)
-        score_col = _pick_score_col(df, args.score_col)
-        s = active_ranking_summary(
-            df=df,
-            score_col=score_col,
-            active_codes=active_codes,
-            top_ks=top_ks,
-            distance_ks=top_ks,
-        )
-        summary["results"][label] = {"table": path, "score_col": score_col, **s}
-        flat = {"label": label, "table": path, "score_col": score_col}
-        for k, v in s.items():
-            if isinstance(v, (int, float)) or v is None:
-                flat[k] = v
-        rows.append(flat)
+        score_cols: list[tuple[str, str]] = []
+        if args.score_col:
+            score_cols.append(("default", _pick_score_col(df, args.score_col)))
+        elif "recall_stage_score" in df.columns and "final_gated_score" in df.columns:
+            score_cols.append(("recall_stage", "recall_stage_score"))
+            score_cols.append(("rerank_stage", "final_gated_score"))
+        else:
+            score_cols.append(("default", _pick_score_col(df, args.score_col)))
+
+        result_entry: dict[str, object] = {"table": path, "scores": {}}
+        for stage_name, score_col in score_cols:
+            s = active_ranking_summary(
+                df=df,
+                score_col=score_col,
+                active_codes=active_codes,
+                top_ks=top_ks,
+                distance_ks=top_ks,
+            )
+            result_entry["scores"][stage_name] = {"score_col": score_col, **s}
+            flat = {"label": label, "stage": stage_name, "table": path, "score_col": score_col}
+            for k, v in s.items():
+                if isinstance(v, (int, float)) or v is None:
+                    flat[k] = v
+            rows.append(flat)
+        summary["results"][label] = result_entry
 
     out_json = Path(args.out_json)
     out_json.parent.mkdir(parents=True, exist_ok=True)
