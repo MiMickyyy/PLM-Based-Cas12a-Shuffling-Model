@@ -90,7 +90,9 @@ class AssistantTrainConfig:
     oversample_weight: float = 2.0
     active_codes_path: str | None = None
     active_sample_weight: float = 1.0
+    hard_negative_sample_weight: float = 1.0
     active_force_train: bool = True
+    min_active_in_val: int = 4
     active_loss_weight: float = 0.0
     active_pairs_per_batch: int = 256
     active_margin: float = 0.10
@@ -483,7 +485,7 @@ def train_assistant_ranker(
     df["is_active"] = (active_strength > 0).astype(np.int64)
 
     train_idx, val_idx = _split_indices(len(df), train_cfg.val_fraction, train_cfg.seed)
-    if bool(train_cfg.active_force_train):
+    if bool(train_cfg.active_force_train) and mode != "active_first":
         active_in_val = active_strength[val_idx] > 0
         if int(np.sum(active_in_val)) > 0:
             moved = val_idx[active_in_val]
@@ -493,6 +495,25 @@ def train_assistant_ranker(
                 val_idx = np.asarray([train_idx[-1]], dtype=np.int64)
                 train_idx = train_idx[:-1]
             logger.info("Moved %d active rows from val to train", int(len(moved)))
+    if mode == "active_first":
+        need_val = max(0, int(train_cfg.min_active_in_val))
+        val_active_count = int(np.sum(active_strength[val_idx] > 0))
+        if need_val > 0 and val_active_count < need_val:
+            train_active_idx = train_idx[active_strength[train_idx] > 0]
+            if len(train_active_idx) > 0:
+                rng = np.random.default_rng(train_cfg.seed + 20260318)
+                rng.shuffle(train_active_idx)
+                move_n = min(int(need_val - val_active_count), int(len(train_active_idx)))
+                if move_n > 0:
+                    moved = np.sort(train_active_idx[:move_n])
+                    keep_train = np.setdiff1d(train_idx, moved, assume_unique=False)
+                    val_idx = np.sort(np.concatenate([val_idx, moved], axis=0))
+                    train_idx = np.sort(keep_train)
+                    logger.info(
+                        "Active-first mode: moved %d active rows train->val to satisfy min_active_in_val=%d",
+                        int(move_n),
+                        int(need_val),
+                    )
 
     slots, extra, y, local_target, exp, is_active, is_hard_negative, local_distance, fmean, fstd = _prepare_arrays(
         df,
@@ -518,16 +539,27 @@ def train_assistant_ranker(
 
     sampler = None
     sampler_num_samples = len(train_idx)
-    if float(train_cfg.oversample_top_fraction) > 0.0 or float(train_cfg.active_sample_weight) > 1.0:
+    if (
+        float(train_cfg.oversample_top_fraction) > 0.0
+        or float(train_cfg.active_sample_weight) > 1.0
+        or float(train_cfg.hard_negative_sample_weight) > 1.0
+    ):
         yt = y[train_idx]
         w = np.ones((len(train_idx),), dtype=np.float32)
-        if float(train_cfg.oversample_top_fraction) > 0.0:
-            thr = float(np.quantile(yt, 1.0 - float(train_cfg.oversample_top_fraction)))
+        top_frac_eff = float(train_cfg.oversample_top_fraction)
+        if mode == "active_first":
+            top_frac_eff = 0.0
+        if top_frac_eff > 0.0:
+            thr = float(np.quantile(yt, 1.0 - top_frac_eff))
             w[yt >= thr] = float(train_cfg.oversample_weight)
         if float(train_cfg.active_sample_weight) > 1.0:
             a = is_active[train_idx]
             active_mult = float(train_cfg.active_sample_weight) * np.maximum(1.0, a)
             w = np.where(a > 0, w * active_mult, w)
+        if float(train_cfg.hard_negative_sample_weight) > 1.0:
+            h = is_hard_negative[train_idx]
+            hmult = float(train_cfg.hard_negative_sample_weight) * np.maximum(1.0, h)
+            w = np.where(h > 0, w * hmult, w)
         if int(train_cfg.active_anchor_repeat) > 1:
             a = is_active[train_idx] > 0.0
             w = np.where(a, w * float(train_cfg.active_anchor_repeat), w)

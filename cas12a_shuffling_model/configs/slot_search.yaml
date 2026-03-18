@@ -94,8 +94,10 @@ slot_search:
       oversample_weight: 2.0
       active_codes_path: Sequence_Result.xlsx
       active_sample_weight: 24.0
+      hard_negative_sample_weight: 6.0
       active_anchor_repeat: 24
-      active_force_train: true
+      active_force_train: false
+      min_active_in_val: 4
       active_loss_weight: 0.8
       active_pairs_per_batch: 256
       active_margin: 0.20

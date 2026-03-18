@@ -127,7 +127,9 @@ def main() -> None:
         active_sample_weight=float(
             args.active_sample_weight if args.active_sample_weight is not None else t.get("active_sample_weight", 1.0)
         ),
+        hard_negative_sample_weight=float(t.get("hard_negative_sample_weight", 1.0)),
         active_force_train=bool(t.get("active_force_train", True)),
+        min_active_in_val=int(t.get("min_active_in_val", 4)),
         active_loss_weight=float(
             args.active_loss_weight if args.active_loss_weight is not None else t.get("active_loss_weight", 0.0)
         ),
