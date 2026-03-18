@@ -25,7 +25,7 @@ def read_table(path: str | Path) -> pd.DataFrame:
                 return pd.read_csv(fallback)
             raise
     if ext in {".csv", ".txt"}:
-        return pd.read_csv(p)
+        return pd.read_csv(p, low_memory=False)
     if ext in {".tsv"}:
         return pd.read_csv(p, sep="\t")
     raise ValueError(f"Unsupported table format: {p}")

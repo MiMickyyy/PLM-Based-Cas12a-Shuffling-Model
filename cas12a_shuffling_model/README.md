@@ -223,6 +223,68 @@ When `slot_search.rerank.teacher_audit=true`, rerank also performs an offline te
 - `assistant_teacher_audit_top.csv`
 - `assistant_teacher_audit_summary.json`
 
+### Active-first rerank upgrade (top-tail focused)
+
+For the current bottleneck (Top50 local ordering), use active-first settings:
+- dual-head assistant (`teacher_head` weak prior + `active_head` dominant)
+- active-local hard negatives mined from rerank shortlist
+- active similarity prior in rerank (`final_score = assistant_score + beta * sim_to_active`)
+
+Hard-negative mining:
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.mine_active_hard_negatives \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --base-table /path/to/teacher_labels.csv \
+  --rerank-table /path/to/assistant_reranked_all.csv \
+  --active-table Sequence_Result.xlsx \
+  --out-table /path/to/assistant_train_active_local.csv
+```
+
+Train active-first assistant (dual-head):
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.train_assistant_ranker \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --data-table /path/to/assistant_train_active_local.csv \
+  --objective-mode active_first \
+  --dual-head
+```
+
+Rerank with active prior + beta sweep:
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.rerank_shortlist \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --shortlist-table /path/to/s_scan_shortlist.csv \
+  --assistant-checkpoint /path/to/assistant_best.pt \
+  --active-table Sequence_Result.xlsx \
+  --active-prior-mode kernel_density_over_actives \
+  --active-prior-beta 0.15 \
+  --active-prior-beta-sweep 0.0,0.05,0.1,0.15,0.2,0.25,0.3 \
+  --dual-head-alpha 0.15
+```
+
+Optional local basin expansion (Hamming-1 + selective Hamming-2):
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.expand_local_neighbors \
+  --config cas12a_shuffling_model/configs/slot_search.yaml \
+  --seed-table /path/to/assistant_reranked_top.csv \
+  --active-table Sequence_Result.xlsx \
+  --out-table /path/to/local_expanded_candidates.csv
+```
+
+Compare rerank variants with active-focused metrics:
+
+```bash
+PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model.cli.report_active_rerank \
+  --named-tables baseline=/path/to/baseline_top.csv,active_prior=/path/to/active_prior_top.csv,active_first=/path/to/active_first_top.csv,dual_head=/path/to/dual_head_top.csv \
+  --active-table Sequence_Result.xlsx \
+  --out-json /path/to/active_rerank_report.json \
+  --out-csv /path/to/active_rerank_report.csv
+```
+
 ### Notes / assumptions
 - Final production search model is `S_scan` (slot-level), not a sequence autoregressive student.
 - `T_family` is used offline for labeling sampled chimera data only.

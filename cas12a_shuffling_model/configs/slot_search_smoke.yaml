@@ -40,6 +40,8 @@ slot_search:
       num_layers: 2
       dropout: 0.1
       use_extra_features: true
+      dual_head: true
+      inference_alpha: 0.15
     train:
       batch_size: 64
       epochs: 4
@@ -48,7 +50,23 @@ slot_search:
       grad_clip: 1.0
       val_fraction: 0.25
       target_col: teacher_seq_score_norm
+      local_target_col: active_local_target
+      hard_negative_col: is_hard_negative
+      local_distance_col: local_active_distance
+      local_max_distance: 4
       chimera_only: true
+      objective_mode: active_first
+      active_local_weight: 1.0
+      top_tail_weight: 0.5
+      pair_local_weight: 0.2
+      teacher_corr_weight: 0.1
+      active_local_pairs_per_batch: 128
+      top_tail_pairs_per_batch: 128
+      pair_local_pairs_per_batch: 128
+      active_local_margin: 0.20
+      top_tail_margin: 0.10
+      pair_local_min_gap: 0.0
+      pair_local_near_tie_gap: 0.0
       top_weight: 1.0
       corr_weight: 0.3
       pair_weight: 0.2
@@ -69,6 +87,7 @@ slot_search:
       oversample_weight: 2.0
       active_codes_path: Sequence_Result.xlsx
       active_sample_weight: 8.0
+      active_anchor_repeat: 16
       active_force_train: true
       active_loss_weight: 0.8
       active_pairs_per_batch: 128
@@ -144,6 +163,39 @@ slot_search:
     batch_size: 512
     top_k: 20
     include_sequence: false
+    active_table: Sequence_Result.xlsx
+    dual_head_alpha: 0.15
+    active_prior_mode: kernel_density_over_actives
+    active_prior_beta: 0.15
+    active_prior_gamma: 0.70
+    active_prior_base_score_col: assistant_score
+    active_prior_beta_sweep: [0.0, 0.05, 0.10, 0.15, 0.20, 0.25]
+    active_eval_top_ks: [20, 50, 100]
     teacher_audit: true
     teacher_audit_top_k: 50
     teacher_audit_batch_size: 4
+
+  hard_negative_mining:
+    output_dir: cas12a_shuffling_model/outputs/slot_search_smoke/hard_negative_mining
+    active_table: Sequence_Result.xlsx
+    score_col: assistant_score
+    top_pool_size: 2000
+    max_negatives: 500
+    min_distance: 1
+    max_distance: 4
+    active_score_quantile: 0.50
+    local_target_col: active_local_target
+    hard_negative_col: is_hard_negative
+    distance_col: local_active_distance
+    active_col: is_active
+
+  local_expand:
+    output_dir: cas12a_shuffling_model/outputs/slot_search_smoke/local_expand
+    active_table: Sequence_Result.xlsx
+    seed_score_col: final_score
+    top_seed_count: 100
+    active_distance_cap: 3
+    no_active_seeds: false
+    no_hamming_1: false
+    hamming_2_top_seeds: 20
+    keep_original_codes: false

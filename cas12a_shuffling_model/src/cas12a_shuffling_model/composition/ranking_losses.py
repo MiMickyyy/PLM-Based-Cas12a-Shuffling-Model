@@ -231,6 +231,65 @@ def active_vs_background_rank_loss(
     return torch.mean(base * weights)
 
 
+def active_local_margin_loss(
+    *,
+    pred: torch.Tensor,
+    is_active: torch.Tensor,
+    is_hard_negative: torch.Tensor,
+    local_distance: torch.Tensor | None,
+    max_local_distance: int,
+    pairs_per_batch: int,
+    margin: float,
+) -> torch.Tensor:
+    finite = torch.isfinite(pred)
+    pos = finite & (is_active > 0.5)
+    neg = finite & (is_active <= 0.5) & (is_hard_negative > 0.5)
+    if local_distance is not None:
+        near = torch.isfinite(local_distance) & (local_distance >= 1.0) & (local_distance <= float(max_local_distance))
+        neg = neg | (finite & (is_active <= 0.5) & near)
+    pos_idx = torch.nonzero(pos, as_tuple=False).squeeze(-1)
+    neg_idx = torch.nonzero(neg, as_tuple=False).squeeze(-1)
+    if pos_idx.numel() == 0 or neg_idx.numel() == 0:
+        return torch.tensor(0.0, device=pred.device)
+    n_pairs = max(1, int(pairs_per_batch))
+    pi = pos_idx[torch.randint(0, pos_idx.numel(), (n_pairs,), device=pred.device)]
+    nj = neg_idx[torch.randint(0, neg_idx.numel(), (n_pairs,), device=pred.device)]
+    term = (pred[pi] - pred[nj]) - float(margin)
+    loss = F.softplus(-term)
+    if local_distance is not None and local_distance.numel() == pred.numel():
+        d = local_distance[nj]
+        w = 1.0 + 1.0 / (1.0 + torch.clamp(d, min=0.0))
+        loss = loss * w
+    return torch.mean(loss)
+
+
+def top_tail_active_loss(
+    *,
+    pred: torch.Tensor,
+    is_active: torch.Tensor,
+    is_hard_negative: torch.Tensor,
+    local_distance: torch.Tensor | None,
+    max_local_distance: int,
+    pairs_per_batch: int,
+    margin: float,
+) -> torch.Tensor:
+    finite = torch.isfinite(pred)
+    pos = finite & (is_active > 0.5)
+    neg = finite & (is_active <= 0.5) & (is_hard_negative > 0.5)
+    if local_distance is not None:
+        near = torch.isfinite(local_distance) & (local_distance >= 1.0) & (local_distance <= float(max_local_distance))
+        neg = neg | (finite & (is_active <= 0.5) & near)
+    pos_idx = torch.nonzero(pos, as_tuple=False).squeeze(-1)
+    neg_idx = torch.nonzero(neg, as_tuple=False).squeeze(-1)
+    if pos_idx.numel() == 0 or neg_idx.numel() == 0:
+        return torch.tensor(0.0, device=pred.device)
+    m = max(1, min(int(pairs_per_batch), int(pos_idx.numel()), int(neg_idx.numel())))
+    hard_pos = pos_idx[torch.argsort(pred[pos_idx], descending=False)[:m]]
+    hard_neg = neg_idx[torch.argsort(pred[neg_idx], descending=True)[:m]]
+    term = (pred[hard_pos] - pred[hard_neg]) - float(margin)
+    return F.softplus(-term).mean()
+
+
 def _pearson_np(true: np.ndarray, pred: np.ndarray) -> float:
     mask = np.isfinite(true) & np.isfinite(pred)
     if mask.sum() < 2:
@@ -340,6 +399,16 @@ def ranking_metrics(
             hits = int(np.sum(a_f[top_idx]))
             metrics[f"active_hits_top{k}"] = float(hits)
             metrics[f"active_recall_top{k}"] = float(hits / n_active) if n_active > 0 else float("nan")
+        if n_active > 0:
+            order = np.argsort(y_pred_f)[::-1]
+            ranks = np.empty_like(order, dtype=np.int64)
+            ranks[order] = np.arange(1, len(order) + 1, dtype=np.int64)
+            active_ranks = ranks[a_f]
+            metrics["best_rank_active"] = float(np.min(active_ranks)) if active_ranks.size > 0 else float("nan")
+            metrics["median_rank_active"] = float(np.median(active_ranks)) if active_ranks.size > 0 else float("nan")
+        else:
+            metrics["best_rank_active"] = float("nan")
+            metrics["median_rank_active"] = float("nan")
     return metrics
 
 

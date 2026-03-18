@@ -30,6 +30,8 @@ from cas12a_shuffling_model.composition.ranking_losses import (
     correlation_loss,
     filtered_pairwise_rank_loss,
     is_better_metric,
+    active_local_margin_loss,
+    top_tail_active_loss,
     ranking_metrics,
     top_focus_loss,
 )
@@ -50,6 +52,23 @@ class AssistantTrainConfig:
     top_weight: float = 1.0
     corr_weight: float = 0.3
     pair_weight: float = 0.2
+    objective_mode: str = "legacy"
+    local_target_col: str | None = "active_local_target"
+    hard_negative_col: str = "is_hard_negative"
+    local_distance_col: str = "local_active_distance"
+    local_max_distance: int = 4
+    active_local_weight: float = 1.0
+    top_tail_weight: float = 0.5
+    pair_local_weight: float = 0.2
+    teacher_corr_weight: float = 0.1
+    active_anchor_repeat: int = 24
+    active_local_pairs_per_batch: int = 256
+    top_tail_pairs_per_batch: int = 256
+    active_local_margin: float = 0.2
+    top_tail_margin: float = 0.1
+    pair_local_pairs_per_batch: int = 512
+    pair_local_min_gap: float = 0.0
+    pair_local_near_tie_gap: float = 0.0
     pair_min_gap: float = 0.01
     pair_near_tie_gap: float = 0.01
     pair_easy_ratio: float = 0.2
@@ -89,14 +108,20 @@ class _AssistantDataset(Dataset):
         slots: np.ndarray,
         extra: np.ndarray,
         target: np.ndarray,
+        local_target: np.ndarray,
         exp: np.ndarray,
         is_active: np.ndarray,
+        is_hard_negative: np.ndarray,
+        local_distance: np.ndarray,
     ):
         self.slots = slots
         self.extra = extra
         self.target = target
+        self.local_target = local_target
         self.exp = exp
         self.is_active = is_active
+        self.is_hard_negative = is_hard_negative
+        self.local_distance = local_distance
 
     def __len__(self) -> int:
         return int(self.slots.shape[0])
@@ -106,8 +131,11 @@ class _AssistantDataset(Dataset):
             "slots": torch.tensor(self.slots[idx], dtype=torch.long),
             "extra": torch.tensor(self.extra[idx], dtype=torch.float32),
             "target": torch.tensor(self.target[idx], dtype=torch.float32),
+            "local_target": torch.tensor(self.local_target[idx], dtype=torch.float32),
             "exp": torch.tensor(self.exp[idx], dtype=torch.float32),
             "is_active": torch.tensor(self.is_active[idx], dtype=torch.float32),
+            "is_hard_negative": torch.tensor(self.is_hard_negative[idx], dtype=torch.float32),
+            "local_distance": torch.tensor(self.local_distance[idx], dtype=torch.float32),
         }
 
 
@@ -141,11 +169,14 @@ def _prepare_arrays(
     df: pd.DataFrame,
     *,
     target_col: str,
+    local_target_col: str | None,
     feature_cols: Sequence[str],
     experimental_col: str | None,
     is_active: np.ndarray | None = None,
+    is_hard_negative: np.ndarray | None = None,
+    local_distance: np.ndarray | None = None,
     train_idx: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     canonical = canonicalize_chimera_table(df, require_sequence=False)
     slots = canonical[slot_columns()].to_numpy(dtype=np.int64)
     y = pd.to_numeric(canonical[target_col], errors="coerce").to_numpy(dtype=np.float32)
@@ -158,12 +189,28 @@ def _prepare_arrays(
         exp = pd.to_numeric(canonical[experimental_col], errors="coerce").to_numpy(dtype=np.float32)
     else:
         exp = np.full((len(canonical),), np.nan, dtype=np.float32)
+    if local_target_col and local_target_col in canonical.columns:
+        local_target = pd.to_numeric(canonical[local_target_col], errors="coerce").to_numpy(dtype=np.float32)
+    else:
+        local_target = y.copy()
     if is_active is None:
         active = np.zeros((len(canonical),), dtype=np.float32)
     else:
         active = np.asarray(is_active, dtype=np.float32).reshape(-1)
         if active.shape[0] != len(canonical):
             raise ValueError("is_active length mismatch")
+    if is_hard_negative is None:
+        hard_neg = np.zeros((len(canonical),), dtype=np.float32)
+    else:
+        hard_neg = np.asarray(is_hard_negative, dtype=np.float32).reshape(-1)
+        if hard_neg.shape[0] != len(canonical):
+            raise ValueError("is_hard_negative length mismatch")
+    if local_distance is None:
+        local_dist = np.full((len(canonical),), np.nan, dtype=np.float32)
+    else:
+        local_dist = np.asarray(local_distance, dtype=np.float32).reshape(-1)
+        if local_dist.shape[0] != len(canonical):
+            raise ValueError("local_distance length mismatch")
 
     if train_idx is None or ex.shape[1] == 0:
         mean = np.zeros((ex.shape[1],), dtype=np.float32)
@@ -174,7 +221,7 @@ def _prepare_arrays(
         std = np.std(train_extra, axis=0).astype(np.float32)
         std = np.where(np.abs(std) < 1e-8, 1.0, std)
         ex = (ex - mean) / std
-    return slots, ex, y, exp, active, mean, std
+    return slots, ex, y, local_target, exp, active, hard_neg, local_dist, mean, std
 
 
 def _run_epoch(
@@ -187,44 +234,130 @@ def _run_epoch(
 ) -> dict[str, float]:
     is_train = optimizer is not None
     model.train(is_train)
-    stats = {"loss": 0.0, "top": 0.0, "corr": 0.0, "pair": 0.0, "exp": 0.0, "active": 0.0, "batches": 0}
+    stats = {
+        "loss": 0.0,
+        "top": 0.0,
+        "corr": 0.0,
+        "pair": 0.0,
+        "exp": 0.0,
+        "active": 0.0,
+        "local_active": 0.0,
+        "top_tail": 0.0,
+        "pair_local": 0.0,
+        "teacher_corr": 0.0,
+        "batches": 0,
+    }
+    mode = str(cfg.objective_mode).strip().lower()
     for batch in loader:
         slots = batch["slots"].to(device)
         extra = batch["extra"].to(device) if batch["extra"].shape[1] > 0 else None
         target = batch["target"].to(device)
+        local_target = batch["local_target"].to(device)
         exp = batch["exp"].to(device)
         is_active = batch["is_active"].to(device)
+        is_hard_negative = batch["is_hard_negative"].to(device)
+        local_distance = batch["local_distance"].to(device)
         with torch.set_grad_enabled(is_train):
-            pred = model(slots, extra)
-            l_top = top_focus_loss(
-                pred=pred,
-                target=target,
-                top_fraction=cfg.top_fraction,
-                pairs_per_batch=cfg.top_pairs_per_batch,
-                margin=cfg.top_margin,
-            )
-            l_corr = correlation_loss(pred, target)
-            l_pair = filtered_pairwise_rank_loss(
-                pred=pred,
-                target=target,
-                pairs_per_batch=cfg.pair_pairs_per_batch,
-                min_gap=cfg.pair_min_gap,
-                near_tie_gap=cfg.pair_near_tie_gap,
-                easy_ratio=cfg.pair_easy_ratio,
-                medium_ratio=cfg.pair_medium_ratio,
-                hard_ratio=cfg.pair_hard_ratio,
-                base_margin=cfg.pair_margin,
-                margin_alpha=cfg.pair_margin_alpha,
-                margin_min=cfg.pair_margin_min,
-                margin_max=cfg.pair_margin_max,
-            )
+            if bool(getattr(model, "cfg", None) and getattr(model.cfg, "dual_head", False)):
+                _, pred_teacher, pred_active = model(slots, extra, return_heads=True)
+            else:
+                pred_active = model(slots, extra)
+                pred_teacher = pred_active
+            pred = pred_active
+
+            l_top = torch.tensor(0.0, device=device)
+            l_corr = torch.tensor(0.0, device=device)
+            l_pair = torch.tensor(0.0, device=device)
+            l_local_active = torch.tensor(0.0, device=device)
+            l_top_tail = torch.tensor(0.0, device=device)
+            l_pair_local = torch.tensor(0.0, device=device)
+            l_teacher_corr = torch.tensor(0.0, device=device)
+
+            if mode == "active_first":
+                l_local_active = active_local_margin_loss(
+                    pred=pred_active,
+                    is_active=is_active,
+                    is_hard_negative=is_hard_negative,
+                    local_distance=local_distance,
+                    max_local_distance=int(cfg.local_max_distance),
+                    pairs_per_batch=int(cfg.active_local_pairs_per_batch),
+                    margin=float(cfg.active_local_margin),
+                )
+                l_top_tail = top_tail_active_loss(
+                    pred=pred_active,
+                    is_active=is_active,
+                    is_hard_negative=is_hard_negative,
+                    local_distance=local_distance,
+                    max_local_distance=int(cfg.local_max_distance),
+                    pairs_per_batch=int(cfg.top_tail_pairs_per_batch),
+                    margin=float(cfg.top_tail_margin),
+                )
+                local_mask = (
+                    (is_active > 0.5)
+                    | (is_hard_negative > 0.5)
+                    | (
+                        torch.isfinite(local_distance)
+                        & (local_distance >= 1.0)
+                        & (local_distance <= float(cfg.local_max_distance))
+                    )
+                )
+                if int(local_mask.sum().item()) >= 4:
+                    l_pair_local = filtered_pairwise_rank_loss(
+                        pred=pred_active[local_mask],
+                        target=local_target[local_mask],
+                        pairs_per_batch=int(cfg.pair_local_pairs_per_batch),
+                        min_gap=float(cfg.pair_local_min_gap),
+                        near_tie_gap=float(cfg.pair_local_near_tie_gap),
+                        easy_ratio=cfg.pair_easy_ratio,
+                        medium_ratio=cfg.pair_medium_ratio,
+                        hard_ratio=cfg.pair_hard_ratio,
+                        base_margin=cfg.pair_margin,
+                        margin_alpha=cfg.pair_margin_alpha,
+                        margin_min=cfg.pair_margin_min,
+                        margin_max=cfg.pair_margin_max,
+                    )
+                l_teacher_corr = correlation_loss(pred_teacher, target)
+                loss = (
+                    float(cfg.active_local_weight) * l_local_active
+                    + float(cfg.top_tail_weight) * l_top_tail
+                    + float(cfg.pair_local_weight) * l_pair_local
+                    + float(cfg.teacher_corr_weight) * l_teacher_corr
+                )
+            else:
+                l_top = top_focus_loss(
+                    pred=pred,
+                    target=target,
+                    top_fraction=cfg.top_fraction,
+                    pairs_per_batch=cfg.top_pairs_per_batch,
+                    margin=cfg.top_margin,
+                )
+                l_corr = correlation_loss(pred, target)
+                l_pair = filtered_pairwise_rank_loss(
+                    pred=pred,
+                    target=target,
+                    pairs_per_batch=cfg.pair_pairs_per_batch,
+                    min_gap=cfg.pair_min_gap,
+                    near_tie_gap=cfg.pair_near_tie_gap,
+                    easy_ratio=cfg.pair_easy_ratio,
+                    medium_ratio=cfg.pair_medium_ratio,
+                    hard_ratio=cfg.pair_hard_ratio,
+                    base_margin=cfg.pair_margin,
+                    margin_alpha=cfg.pair_margin_alpha,
+                    margin_min=cfg.pair_margin_min,
+                    margin_max=cfg.pair_margin_max,
+                )
+                loss = (
+                    cfg.top_weight * l_top
+                    + cfg.corr_weight * l_corr
+                    + cfg.pair_weight * l_pair
+                )
             l_exp = torch.tensor(0.0, device=device)
             if float(cfg.experimental_weight) > 0.0:
                 mask = torch.isfinite(exp)
                 if int(mask.sum().item()) > 0:
-                    l_exp = torch.mean((pred[mask] - exp[mask]) ** 2)
+                    l_exp = torch.mean((pred_active[mask] - exp[mask]) ** 2)
             l_active = torch.tensor(0.0, device=device)
-            if float(cfg.active_loss_weight) > 0.0:
+            if mode != "active_first" and float(cfg.active_loss_weight) > 0.0:
                 l_active = active_vs_background_rank_loss(
                     pred=pred,
                     target=target,
@@ -233,14 +366,12 @@ def _run_epoch(
                     margin=float(cfg.active_margin),
                     min_target_gap=float(cfg.active_min_target_gap),
                 )
-
-            loss = (
-                cfg.top_weight * l_top
-                + cfg.corr_weight * l_corr
-                + cfg.pair_weight * l_pair
-                + cfg.experimental_weight * l_exp
-                + cfg.active_loss_weight * l_active
-            )
+            if mode == "active_first":
+                loss = loss + cfg.experimental_weight * l_exp
+            else:
+                loss = loss + cfg.experimental_weight * l_exp + cfg.active_loss_weight * l_active
+            if is_train and (not loss.requires_grad):
+                loss = pred_active.sum() * 0.0
             if is_train:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -252,9 +383,13 @@ def _run_epoch(
         stats["pair"] += float(l_pair.item())
         stats["exp"] += float(l_exp.item())
         stats["active"] += float(l_active.item())
+        stats["local_active"] += float(l_local_active.item())
+        stats["top_tail"] += float(l_top_tail.item())
+        stats["pair_local"] += float(l_pair_local.item())
+        stats["teacher_corr"] += float(l_teacher_corr.item())
         stats["batches"] += 1
     if stats["batches"] > 0:
-        for k in ("loss", "top", "corr", "pair", "exp", "active"):
+        for k in ("loss", "top", "corr", "pair", "exp", "active", "local_active", "top_tail", "pair_local", "teacher_corr"):
             stats[k] /= stats["batches"]
     return stats
 
@@ -289,20 +424,40 @@ def train_assistant_ranker(
 
     df = read_table(data_table)
     if bool(train_cfg.chimera_only) and "source_type" in df.columns:
-        df = df[df["source_type"].astype(str).str.lower().eq("chimera")].copy()
+        src = df["source_type"]
+        src_str = src.astype(str).str.strip().str.lower()
+        keep = src.isna() | src_str.isin({"", "nan", "chimera", "active"})
+        df = df[keep].copy()
     if len(df) < 10:
         raise ValueError("Not enough rows for assistant training")
     df = canonicalize_chimera_table(df, require_sequence=False)
     if train_cfg.target_col not in df.columns:
         raise KeyError(f"Missing target column: {train_cfg.target_col}")
-    df = df[pd.to_numeric(df[train_cfg.target_col], errors="coerce").notna()].reset_index(drop=True)
-    if len(df) < 10:
-        raise ValueError("No finite targets after filtering")
+    target_numeric = pd.to_numeric(df[train_cfg.target_col], errors="coerce")
+    mode = str(train_cfg.objective_mode).strip().lower()
+    if mode == "active_first":
+        has_any_teacher = int(np.isfinite(target_numeric.to_numpy()).sum()) >= 2
+        if not has_any_teacher:
+            logger.warning(
+                "Active-first mode: no finite teacher targets found in %s, teacher regularizer will be skipped",
+                train_cfg.target_col,
+            )
+    else:
+        df = df[target_numeric.notna()].reset_index(drop=True)
+        if len(df) < 10:
+            raise ValueError("No finite targets after filtering")
 
     active_strength = np.zeros((len(df),), dtype=np.float32)
     if "is_active" in df.columns:
         col_active = pd.to_numeric(df["is_active"], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
         active_strength = np.maximum(active_strength, (col_active > 0.0).astype(np.float32))
+    hard_negative = np.zeros((len(df),), dtype=np.float32)
+    if train_cfg.hard_negative_col in df.columns:
+        col_hn = pd.to_numeric(df[train_cfg.hard_negative_col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+        hard_negative = np.maximum(hard_negative, (col_hn > 0.0).astype(np.float32))
+    local_distance = np.full((len(df),), np.nan, dtype=np.float32)
+    if train_cfg.local_distance_col in df.columns:
+        local_distance = pd.to_numeric(df[train_cfg.local_distance_col], errors="coerce").to_numpy(dtype=np.float32)
     active_counts: dict[str, int] = {}
     if train_cfg.active_codes_path:
         try:
@@ -339,20 +494,30 @@ def train_assistant_ranker(
                 train_idx = train_idx[:-1]
             logger.info("Moved %d active rows from val to train", int(len(moved)))
 
-    slots, extra, y, exp, is_active, fmean, fstd = _prepare_arrays(
+    slots, extra, y, local_target, exp, is_active, is_hard_negative, local_distance, fmean, fstd = _prepare_arrays(
         df,
         target_col=train_cfg.target_col,
+        local_target_col=train_cfg.local_target_col,
         feature_cols=feature_cols,
         experimental_col=train_cfg.experimental_label_col,
         is_active=active_strength,
+        is_hard_negative=hard_negative,
+        local_distance=local_distance,
         train_idx=train_idx,
     )
+    if mode == "active_first":
+        # local target fallback: for rows without local target, use teacher target
+        local_target = np.where(np.isfinite(local_target), local_target, y).astype(np.float32)
+        no_local = int(np.sum(~np.isfinite(local_target)))
+        if no_local > 0:
+            logger.warning("Active-first mode: %d rows have non-finite local target after fallback", no_local)
 
-    ds = _AssistantDataset(slots, extra, y, exp, is_active)
+    ds = _AssistantDataset(slots, extra, y, local_target, exp, is_active, is_hard_negative, local_distance)
     train_ds = Subset(ds, train_idx.tolist())
     val_ds = Subset(ds, val_idx.tolist())
 
     sampler = None
+    sampler_num_samples = len(train_idx)
     if float(train_cfg.oversample_top_fraction) > 0.0 or float(train_cfg.active_sample_weight) > 1.0:
         yt = y[train_idx]
         w = np.ones((len(train_idx),), dtype=np.float32)
@@ -363,17 +528,28 @@ def train_assistant_ranker(
             a = is_active[train_idx]
             active_mult = float(train_cfg.active_sample_weight) * np.maximum(1.0, a)
             w = np.where(a > 0, w * active_mult, w)
+        if int(train_cfg.active_anchor_repeat) > 1:
+            a = is_active[train_idx] > 0.0
+            w = np.where(a, w * float(train_cfg.active_anchor_repeat), w)
+            sampler_num_samples = int(
+                len(train_idx) + max(0, int(train_cfg.active_anchor_repeat) - 1) * int(np.sum(a))
+            )
         w = np.clip(w, 1.0, 1024.0)
-        sampler = WeightedRandomSampler(w.tolist(), num_samples=len(train_idx), replacement=True)
+        sampler = WeightedRandomSampler(w.tolist(), num_samples=max(1, sampler_num_samples), replacement=True)
 
     train_active = int(np.sum(is_active[train_idx] > 0))
     val_active = int(np.sum(is_active[val_idx] > 0))
+    train_hard_neg = int(np.sum(is_hard_negative[train_idx] > 0))
+    val_hard_neg = int(np.sum(is_hard_negative[val_idx] > 0))
     logger.info(
-        "Assistant split: train=%d val=%d train_active=%d val_active=%d",
+        "Assistant split: train=%d val=%d train_active=%d val_active=%d train_hard_neg=%d val_hard_neg=%d mode=%s",
         len(train_idx),
         len(val_idx),
         train_active,
         val_active,
+        train_hard_neg,
+        val_hard_neg,
+        mode,
     )
 
     train_loader = DataLoader(
@@ -413,12 +589,20 @@ def train_assistant_ranker(
             "train_pair_loss": tr["pair"],
             "train_exp_loss": tr["exp"],
             "train_active_loss": tr["active"],
+            "train_active_local_loss": tr["local_active"],
+            "train_top_tail_loss": tr["top_tail"],
+            "train_pair_local_loss": tr["pair_local"],
+            "train_teacher_corr_loss": tr["teacher_corr"],
             "val_loss": va["loss"],
             "val_top_loss": va["top"],
             "val_corr_loss": va["corr"],
             "val_pair_loss": va["pair"],
             "val_exp_loss": va["exp"],
             "val_active_loss": va["active"],
+            "val_active_local_loss": va["local_active"],
+            "val_top_tail_loss": va["top_tail"],
+            "val_pair_local_loss": va["pair_local"],
+            "val_teacher_corr_loss": va["teacher_corr"],
             **metrics,
         }
         history_rows.append(row)
@@ -476,6 +660,8 @@ def train_assistant_ranker(
         "n_val": int(len(val_idx)),
         "n_active_train": int(train_active),
         "n_active_val": int(val_active),
+        "n_hard_neg_train": int(train_hard_neg),
+        "n_hard_neg_val": int(val_hard_neg),
         "best_epoch": int(best_epoch),
         "best_val_loss": float(best_val_loss),
         "best_metric": train_cfg.best_metric,

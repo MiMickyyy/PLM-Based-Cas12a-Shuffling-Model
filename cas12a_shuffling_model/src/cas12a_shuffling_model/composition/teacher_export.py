@@ -171,6 +171,11 @@ def export_teacher_labels(
         slot_code_col=slot_code_col,
         sequence_col=sequence_col,
     )
+    if "source_type" not in canonical.columns:
+        canonical["source_type"] = "chimera"
+    else:
+        src = canonical["source_type"].astype("string")
+        canonical["source_type"] = src.fillna("chimera")
     canonical = canonical.sort_values("slot_code_11").reset_index(drop=True)
     canonical["sequence_hash"] = canonical["full_protein_sequence"].map(sha256_text)
 

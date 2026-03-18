@@ -23,6 +23,7 @@ def _make_train_table(tmp_path: Path) -> tuple[Path, Path]:
             "length": rng.integers(1200, 1400, size=64),
         }
     )
+    table["source_type"] = np.where(np.arange(len(table)) % 7 == 0, "natural", np.nan)
     train_table = tmp_path / "train.csv"
     table.to_csv(train_table, index=False)
 
@@ -61,6 +62,7 @@ def test_assistant_active_weighted_smoke(tmp_path):
         feature_cols=[],
     )
     assert summary["n_active_train"] >= 1
+    assert summary["n_rows"] < 64
     assert (out_dir / "assistant_best.pt").exists()
 
 

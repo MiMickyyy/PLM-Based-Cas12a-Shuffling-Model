@@ -30,9 +30,14 @@ def main() -> None:
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--feature-cols", default=None, help="comma-separated feature columns; empty => slot-only")
     ap.add_argument("--target-col", default=None)
+    ap.add_argument("--local-target-col", default=None)
     ap.add_argument("--active-table", default=None, help="Path to active combo table (e.g., Sequence_Result.xlsx)")
     ap.add_argument("--active-loss-weight", type=float, default=None)
     ap.add_argument("--active-sample-weight", type=float, default=None)
+    ap.add_argument("--objective-mode", choices=["legacy", "active_first"], default=None)
+    ap.add_argument("--dual-head", action="store_true")
+    ap.add_argument("--no-dual-head", action="store_true")
+    ap.add_argument("--dual-head-alpha", type=float, default=None)
     ap.add_argument("--device", default=None)
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=None)
@@ -55,12 +60,21 @@ def main() -> None:
     else:
         run_dir = str(Path(run_dir) / f"run_{int(time.time())}")
 
+    dual_head_cfg = bool(m.get("dual_head", False))
+    if args.no_dual_head:
+        dual_head = False
+    elif args.dual_head:
+        dual_head = True
+    else:
+        dual_head = dual_head_cfg
     model_cfg = AssistantModelConfig(
         slot_embed_dim=int(m.get("slot_embed_dim", 16)),
         hidden_dim=int(m.get("hidden_dim", 128)),
         num_layers=int(m.get("num_layers", 3)),
         dropout=float(m.get("dropout", 0.1)),
         use_extra_features=bool(m.get("use_extra_features", True)),
+        dual_head=bool(dual_head),
+        inference_alpha=float(args.dual_head_alpha if args.dual_head_alpha is not None else m.get("inference_alpha", 0.15)),
     )
     train_cfg = AssistantTrainConfig(
         seed=int(cfg.get("seed", 13)),
@@ -73,6 +87,23 @@ def main() -> None:
         top_weight=float(t.get("top_weight", 1.0)),
         corr_weight=float(t.get("corr_weight", 0.3)),
         pair_weight=float(t.get("pair_weight", 0.2)),
+        objective_mode=str(args.objective_mode or t.get("objective_mode", "legacy")),
+        local_target_col=str(args.local_target_col or t.get("local_target_col", "active_local_target")),
+        hard_negative_col=str(t.get("hard_negative_col", "is_hard_negative")),
+        local_distance_col=str(t.get("local_distance_col", "local_active_distance")),
+        local_max_distance=int(t.get("local_max_distance", 4)),
+        active_local_weight=float(t.get("active_local_weight", 1.0)),
+        top_tail_weight=float(t.get("top_tail_weight", 0.5)),
+        pair_local_weight=float(t.get("pair_local_weight", 0.2)),
+        teacher_corr_weight=float(t.get("teacher_corr_weight", 0.1)),
+        active_anchor_repeat=int(t.get("active_anchor_repeat", 24)),
+        active_local_pairs_per_batch=int(t.get("active_local_pairs_per_batch", 256)),
+        top_tail_pairs_per_batch=int(t.get("top_tail_pairs_per_batch", 256)),
+        active_local_margin=float(t.get("active_local_margin", 0.20)),
+        top_tail_margin=float(t.get("top_tail_margin", 0.10)),
+        pair_local_pairs_per_batch=int(t.get("pair_local_pairs_per_batch", 512)),
+        pair_local_min_gap=float(t.get("pair_local_min_gap", 0.0)),
+        pair_local_near_tie_gap=float(t.get("pair_local_near_tie_gap", 0.0)),
         pair_min_gap=float(t.get("pair_min_gap", 0.01)),
         pair_near_tie_gap=float(t.get("pair_near_tie_gap", 0.01)),
         pair_easy_ratio=float(t.get("pair_easy_ratio", 0.2)),

@@ -5,6 +5,11 @@ import logging
 import time
 from pathlib import Path
 
+from cas12a_shuffling_model.composition.active_prior import (
+    parse_beta_list,
+    parse_slot_weights,
+    load_active_codes,
+)
 from cas12a_shuffling_model.composition.rerank import RerankConfig, rerank_shortlist
 from cas12a_shuffling_model.io.loaders import load_yaml
 from cas12a_shuffling_model.teacher.scoring_utils import (
@@ -26,6 +31,18 @@ def main() -> None:
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--top-k", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=None)
+    ap.add_argument("--dual-head-alpha", type=float, default=None)
+    ap.add_argument("--active-table", default=None)
+    ap.add_argument(
+        "--active-prior-mode",
+        default=None,
+        choices=["none", "min_hamming_similarity", "weighted_slot_similarity", "kernel_density_over_actives"],
+    )
+    ap.add_argument("--active-prior-beta", type=float, default=None)
+    ap.add_argument("--active-prior-gamma", type=float, default=None)
+    ap.add_argument("--active-prior-slot-weights", default=None)
+    ap.add_argument("--active-prior-beta-sweep", default=None, help="comma list, e.g. 0.0,0.05,0.1")
+    ap.add_argument("--active-prior-base-score-col", default=None)
     ap.add_argument("--include-sequence", action="store_true")
     ap.add_argument("--teacher-audit", action="store_true")
     ap.add_argument("--teacher-audit-top-k", type=int, default=None)
@@ -63,6 +80,15 @@ def main() -> None:
         vd_path = resolve_validated_domains_path(cfg, cli_path=args.validated_domains)
         domains = load_validated_domains_dict(vd_path)
     teacher_scorer = build_teacher_scorer_from_config(cfg, device=args.device) if teacher_audit else None
+    active_table = str(args.active_table or c.get("active_table") or cfg.get("paths", {}).get("sequence_results", "")).strip()
+    if active_table:
+        try:
+            active_codes = load_active_codes(active_table)
+        except FileNotFoundError:
+            logger.warning("Active table not found: %s; rerank will run without active prior", active_table)
+            active_codes = []
+    else:
+        active_codes = []
 
     outputs = rerank_shortlist(
         shortlist_table=args.shortlist_table,
@@ -72,6 +98,34 @@ def main() -> None:
             batch_size=int(args.batch_size if args.batch_size is not None else c.get("batch_size", 2048)),
             top_k=int(args.top_k if args.top_k is not None else c.get("top_k", 50)),
             include_sequence=include_sequence,
+            dual_head_alpha=(float(args.dual_head_alpha) if args.dual_head_alpha is not None else c.get("dual_head_alpha")),
+            active_prior_mode=str(
+                args.active_prior_mode if args.active_prior_mode is not None else c.get("active_prior_mode", "none")
+            ),
+            active_prior_beta=float(
+                args.active_prior_beta if args.active_prior_beta is not None else c.get("active_prior_beta", 0.0)
+            ),
+            active_prior_gamma=float(
+                args.active_prior_gamma if args.active_prior_gamma is not None else c.get("active_prior_gamma", 0.7)
+            ),
+            active_prior_slot_weights=parse_slot_weights(
+                args.active_prior_slot_weights
+                if args.active_prior_slot_weights is not None
+                else c.get("active_prior_slot_weights")
+            ),
+            active_prior_beta_sweep=tuple(
+                parse_beta_list(
+                    args.active_prior_beta_sweep
+                    if args.active_prior_beta_sweep is not None
+                    else c.get("active_prior_beta_sweep")
+                )
+            ),
+            active_prior_base_score_col=str(
+                args.active_prior_base_score_col
+                if args.active_prior_base_score_col is not None
+                else c.get("active_prior_base_score_col", "assistant_score")
+            ),
+            active_eval_top_ks=tuple(int(x) for x in c.get("active_eval_top_ks", [50, 100])),
             teacher_audit=teacher_audit,
             teacher_audit_top_k=int(
                 args.teacher_audit_top_k if args.teacher_audit_top_k is not None else c.get("teacher_audit_top_k", 200)
@@ -82,6 +136,7 @@ def main() -> None:
                 else c.get("teacher_audit_batch_size", 8)
             ),
         ),
+        active_codes=active_codes,
         validated_domains=domains,
         device=args.device,
         teacher_scorer=teacher_scorer,
