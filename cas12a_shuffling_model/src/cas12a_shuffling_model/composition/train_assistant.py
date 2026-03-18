@@ -397,7 +397,13 @@ def _run_epoch(
 
 
 @torch.no_grad()
-def _predict_loader(model: nn.Module, loader: DataLoader, device: str) -> tuple[np.ndarray, np.ndarray]:
+def _predict_loader(
+    model: nn.Module,
+    loader: DataLoader,
+    device: str,
+    *,
+    prediction_mode: str = "combined",
+) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     y_true = []
     y_pred = []
@@ -405,7 +411,17 @@ def _predict_loader(model: nn.Module, loader: DataLoader, device: str) -> tuple[
         slots = batch["slots"].to(device)
         extra = batch["extra"].to(device) if batch["extra"].shape[1] > 0 else None
         target = batch["target"].numpy()
-        pred = model(slots, extra).detach().cpu().numpy()
+        if bool(getattr(model, "cfg", None) and getattr(model.cfg, "dual_head", False)):
+            p_comb, p_teacher, p_active = model(slots, extra, return_heads=True)
+            mode = str(prediction_mode).strip().lower()
+            if mode == "active":
+                pred = p_active.detach().cpu().numpy()
+            elif mode == "teacher":
+                pred = p_teacher.detach().cpu().numpy()
+            else:
+                pred = p_comb.detach().cpu().numpy()
+        else:
+            pred = model(slots, extra).detach().cpu().numpy()
         y_true.append(target)
         y_pred.append(pred)
     return np.concatenate(y_true, axis=0), np.concatenate(y_pred, axis=0)
@@ -611,7 +627,8 @@ def train_assistant_ranker(
     for epoch in range(1, int(train_cfg.epochs) + 1):
         tr = _run_epoch(model=model, loader=train_loader, optimizer=optimizer, device=device, cfg=train_cfg)
         va = _run_epoch(model=model, loader=val_loader, optimizer=None, device=device, cfg=train_cfg)
-        y_true, y_pred = _predict_loader(model, val_loader, device)
+        pred_mode = "active" if mode == "active_first" else "combined"
+        y_true, y_pred = _predict_loader(model, val_loader, device, prediction_mode=pred_mode)
         metrics = ranking_metrics(y_true, y_pred, is_active=is_active[val_idx])
         row = {
             "epoch": epoch,
@@ -639,7 +656,7 @@ def train_assistant_ranker(
         }
         history_rows.append(row)
         logger.info(
-            "Assistant epoch %d/%d train_loss=%.4f val_loss=%.4f global_corr=%.4f top5=%.4f active_top50=%d",
+            "Assistant epoch %d/%d train_loss=%.4f val_loss=%.4f global_corr=%.4f top5=%.4f active_top50=%d active_top100=%d best_active_rank=%s",
             epoch,
             train_cfg.epochs,
             row["train_loss"],
@@ -647,6 +664,8 @@ def train_assistant_ranker(
             row["global_corr_chimera"],
             row["top5_overlap"],
             int(row.get("active_hits_top50", 0.0)),
+            int(row.get("active_hits_top100", 0.0)),
+            str(int(row["best_rank_active"])) if np.isfinite(float(row.get("best_rank_active", float("nan")))) else "nan",
         )
 
         torch.save(
@@ -663,11 +682,14 @@ def train_assistant_ranker(
 
         if row["val_loss"] < best_val_loss:
             best_val_loss = float(row["val_loss"])
+        tie_breakers = ("top5_overlap", "top10_overlap")
+        if str(train_cfg.best_metric).startswith("active_hits_top"):
+            tie_breakers = ("active_hits_top100", "active_recall_top100", "top5_overlap")
         if is_better_metric(
             new_metrics=row,
             best_metrics=best_metrics,
             primary_key=train_cfg.best_metric,
-            tie_breakers=("top5_overlap", "top10_overlap"),
+            tie_breakers=tie_breakers,
         ):
             best_metrics = {k: float(v) for k, v in row.items() if isinstance(v, (int, float))}
             best_epoch = epoch

@@ -250,6 +250,7 @@ PYTHONPATH=cas12a_shuffling_model/src .venv/bin/python -m cas12a_shuffling_model
   --objective-mode active_first \
   --dual-head
 ```
+active-first mode 默认用 `active_hits_top500` 选最优 checkpoint（而非 `global_corr_chimera`）。
 
 Rerank with active prior + beta sweep:
 

@@ -95,7 +95,7 @@ slot_search:
       active_pairs_per_batch: 128
       active_margin: 0.20
       active_min_target_gap: -1.0
-      best_metric: global_corr_chimera
+      best_metric: active_hits_top500
       num_workers: 0
       cpu_threads: 10
       interop_threads: 4
