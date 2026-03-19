@@ -30,8 +30,8 @@ class _Combo:
     name: str
     recall_policy: str
     final_rerank_policy: str
-    recall_teacher_weight: float = 0.70
-    recall_scan_weight: float = 0.30
+    recall_teacher_weight: float = 0.35
+    recall_scan_weight: float = 0.65
     recall_active_weight: float = 0.00
     recall_diversity_weight: float = 0.05
 
@@ -124,6 +124,13 @@ def main() -> None:
     ap.add_argument("--recall-pool-size", type=int, default=100000)
     ap.add_argument("--top-k", type=int, default=50)
     ap.add_argument("--combos", default=None, help="name:recall:rerank,name:recall:rerank")
+    ap.add_argument("--recall-teacher-weight", type=float, default=0.35)
+    ap.add_argument("--recall-scan-weight", type=float, default=0.65)
+    ap.add_argument("--recall-active-weight", type=float, default=0.0)
+    ap.add_argument("--recall-diversity-weight", type=float, default=0.05)
+    ap.add_argument("--disable-teacher-auto-flip", action="store_true")
+    ap.add_argument("--disable-teacher-guardrail", action="store_true")
+    ap.add_argument("--teacher-guardrail-min-frac", type=float, default=0.90)
     ap.add_argument("--disable-loo", action="store_true")
     ap.add_argument("--device", default=None)
     ap.add_argument("--log-level", default="INFO")
@@ -153,16 +160,19 @@ def main() -> None:
         policy = TwoStagePolicyConfig(
             recall_policy=combo.recall_policy,
             final_rerank_policy=combo.final_rerank_policy,
-            recall_teacher_weight=float(combo.recall_teacher_weight),
-            recall_scan_weight=float(combo.recall_scan_weight),
-            recall_active_weight=float(combo.recall_active_weight),
-            recall_diversity_weight=float(combo.recall_diversity_weight),
+            recall_teacher_weight=float(args.recall_teacher_weight),
+            recall_scan_weight=float(args.recall_scan_weight),
+            recall_active_weight=float(args.recall_active_weight),
+            recall_diversity_weight=float(args.recall_diversity_weight),
             recall_pool_size=int(args.recall_pool_size),
             active_similarity_mode=str(c.get("active_prior_mode", "kernel_density_over_actives")),
             active_similarity_beta=float(c.get("active_prior_beta", 0.15)),
             active_similarity_gamma=float(c.get("active_prior_gamma", 0.70)),
             teacher_plausibility_quantile=float(c.get("teacher_plausibility_quantile", 0.05)),
             teacher_plausibility_penalty=float(c.get("teacher_plausibility_penalty", 0.50)),
+            teacher_auto_flip=not bool(args.disable_teacher_auto_flip),
+            teacher_guardrail=not bool(args.disable_teacher_guardrail),
+            teacher_guardrail_min_frac=float(args.teacher_guardrail_min_frac),
         )
         scored = apply_two_stage_policy(scored_base, active_codes=active_codes, cfg=policy)
         recall_sorted = scored.sort_values("recall_stage_score", ascending=False).reset_index(drop=True)
@@ -243,6 +253,8 @@ def main() -> None:
             "suppression": suppression,
             "missing_count_in_pool": int(len(missing_pool_codes)),
             "missing_active_codes_in_pool": sorted(missing_pool_codes),
+            "teacher_recall_flipped": int(scored["teacher_recall_flipped"].iloc[0]) if "teacher_recall_flipped" in scored.columns and len(scored) else 0,
+            "teacher_recall_guardrail_fallback": int(scored["teacher_recall_guardrail_fallback"].iloc[0]) if "teacher_recall_guardrail_fallback" in scored.columns and len(scored) else 0,
             **loo,
         }
         summary_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -260,6 +272,8 @@ def main() -> None:
             "best_rank_active": rerank_summary.get("best_rank_active"),
             "median_rank_active": rerank_summary.get("median_rank_active"),
             "n_suppressed": suppression.get("n_suppressed", np.nan),
+            "teacher_recall_flipped": summary["teacher_recall_flipped"],
+            "teacher_recall_guardrail_fallback": summary["teacher_recall_guardrail_fallback"],
             "loo_hits@50": loo["loo_hits@50"],
             "loo_hits@100": loo["loo_hits@100"],
             "novelty_median_dist_top1k": float(novelty_df["median_dist"].iloc[0]) if len(novelty_df) > 0 else np.nan,

@@ -205,6 +205,9 @@ slot_search:
     alpha_far: 0.65
     alpha_near: 0.10
     similarity_beta: 0.15
+    recall_teacher_weight: 0.35
+    recall_scan_weight: 0.65
+    recall_active_weight: 0.00
     recall_pool_size: 100000
     teacher_usage_mode: recall_only
     active_prior_mode: kernel_density_over_actives

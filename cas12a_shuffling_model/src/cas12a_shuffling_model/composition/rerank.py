@@ -43,9 +43,9 @@ class RerankConfig:
     soft_center: float | None = None
     soft_scale: float = 8.0
     recall_policy: str = "teacher_recall"
-    recall_teacher_weight: float = 0.70
+    recall_teacher_weight: float = 0.35
     recall_active_weight: float = 0.10
-    recall_scan_weight: float = 0.20
+    recall_scan_weight: float = 0.65
     recall_pool_size: int | None = 100000
     teacher_usage_mode: str = "none"
     teacher_plausibility_quantile: float = 0.05

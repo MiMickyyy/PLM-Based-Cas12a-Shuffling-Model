@@ -216,17 +216,17 @@ def main() -> None:
             recall_teacher_weight=float(
                 args.recall_teacher_weight
                 if args.recall_teacher_weight is not None
-                else gp.get("recall_teacher_weight", c.get("recall_teacher_weight", 0.70))
+                else c.get("recall_teacher_weight", gp.get("recall_teacher_weight", 0.35))
             ),
             recall_active_weight=float(
                 args.recall_active_weight
                 if args.recall_active_weight is not None
-                else gp.get("recall_active_weight", c.get("recall_active_weight", 0.10))
+                else c.get("recall_active_weight", gp.get("recall_active_weight", 0.10))
             ),
             recall_scan_weight=float(
                 args.recall_scan_weight
                 if args.recall_scan_weight is not None
-                else gp.get("recall_scan_weight", c.get("recall_scan_weight", 0.20))
+                else c.get("recall_scan_weight", gp.get("recall_scan_weight", 0.65))
             ),
             recall_pool_size=(
                 int(args.recall_pool_size)

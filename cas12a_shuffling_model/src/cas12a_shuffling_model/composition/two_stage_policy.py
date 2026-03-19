@@ -30,6 +30,10 @@ class TwoStagePolicyConfig:
     teacher_plausibility_quantile: float = 0.05
     teacher_plausibility_penalty: float = 0.50
     teacher_plausibility_floor_mode: str = "global"
+    teacher_auto_flip: bool = True
+    teacher_guardrail: bool = True
+    teacher_guardrail_min_frac: float = 0.90
+    teacher_recall_max_abs_z: float = 2.5
 
 
 def _as_float_array(values: pd.Series | Sequence[float], *, fill: float = 0.0) -> np.ndarray:
@@ -103,6 +107,24 @@ def _slot_novelty_against_active(
     return novelty
 
 
+def _hits_in_topk(
+    *,
+    scores: np.ndarray,
+    codes: Sequence[str],
+    active_codes: Sequence[str],
+    top_k: int,
+) -> int:
+    if top_k <= 0:
+        return 0
+    if len(codes) == 0 or len(active_codes) == 0:
+        return 0
+    k = int(min(top_k, len(codes)))
+    order = np.argsort(-np.asarray(scores, dtype=np.float64), kind="mergesort")
+    top_codes = {str(codes[i]) for i in order[:k]}
+    actives = set(str(x) for x in active_codes)
+    return int(len(top_codes & actives))
+
+
 def apply_two_stage_policy(
     df: pd.DataFrame,
     *,
@@ -120,6 +142,9 @@ def apply_two_stage_policy(
     teacher_z = _robust_z(score_teacher)
     active_z = _robust_z(score_active)
     scan_z = _robust_z(score_scan)
+    teacher_z = np.clip(teacher_z, -float(cfg.teacher_recall_max_abs_z), float(cfg.teacher_recall_max_abs_z))
+    teacher_flipped = 0
+    teacher_guardrail_fallback = 0
 
     if len(active_norm) > 0:
         sim_to_active = active_similarity_score(
@@ -139,6 +164,20 @@ def apply_two_stage_policy(
     recall_policy = str(cfg.recall_policy).strip().lower()
     if recall_policy == "scan_teacher_mix":
         recall_policy = "teacher_recall"
+    if bool(cfg.teacher_auto_flip) and len(active_norm) > 0:
+        probe_top_k = (
+            int(cfg.recall_pool_size)
+            if cfg.recall_pool_size is not None
+            else int(min(len(codes), 100000))
+        )
+        probe_top_k = max(1, probe_top_k)
+        pos_hits = _hits_in_topk(scores=teacher_z, codes=codes, active_codes=active_norm, top_k=probe_top_k)
+        neg_hits = _hits_in_topk(scores=-teacher_z, codes=codes, active_codes=active_norm, top_k=probe_top_k)
+        if neg_hits > pos_hits:
+            teacher_z = -teacher_z
+            score_teacher = -score_teacher
+            teacher_flipped = 1
+
     if recall_policy == "scan_only":
         recall_score = scan_z
     elif recall_policy == "teacher_head":
@@ -169,6 +208,23 @@ def apply_two_stage_policy(
         recall_score = active_z
     else:
         raise ValueError(f"Unknown recall_policy: {cfg.recall_policy}")
+    if (
+        bool(cfg.teacher_guardrail)
+        and len(active_norm) > 0
+        and recall_policy in {"teacher_recall", "teacher_recall_plus_diversity", "teacher_head", "teacher_active_mix"}
+    ):
+        probe_top_k = (
+            int(cfg.recall_pool_size)
+            if cfg.recall_pool_size is not None
+            else int(min(len(codes), 100000))
+        )
+        probe_top_k = max(1, probe_top_k)
+        scan_hits = _hits_in_topk(scores=scan_z, codes=codes, active_codes=active_norm, top_k=probe_top_k)
+        mixed_hits = _hits_in_topk(scores=recall_score, codes=codes, active_codes=active_norm, top_k=probe_top_k)
+        min_allowed = int(np.floor(float(cfg.teacher_guardrail_min_frac) * float(scan_hits)))
+        if mixed_hits < min_allowed:
+            recall_score = scan_z.copy()
+            teacher_guardrail_fallback = 1
 
     rerank_policy = str(cfg.final_rerank_policy).strip().lower()
     if rerank_policy == "active_only":
@@ -196,4 +252,6 @@ def apply_two_stage_policy(
     out["teacher_floor_penalty"] = floor_penalty
     out["recall_policy"] = recall_policy
     out["final_rerank_policy"] = rerank_policy
+    out["teacher_recall_flipped"] = int(teacher_flipped)
+    out["teacher_recall_guardrail_fallback"] = int(teacher_guardrail_fallback)
     return out
